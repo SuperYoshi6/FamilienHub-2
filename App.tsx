@@ -9,66 +9,47 @@ import ActivitiesPage from './pages/ActivitiesPage';
 import SettingsPage from './pages/SettingsPage';
 import WeatherPage from './pages/WeatherPage';
 import Logo from './components/Logo';
-import { Lock, X } from 'lucide-react';
+import { Lock, X, Loader2, ArrowRight } from 'lucide-react';
 import { t, Language } from './services/translations';
+import { Backend } from './services/backend';
 
-// Initial Data Fallback
-const INITIAL_FAMILY: FamilyMember[] = [
-  { id: '1', name: 'Mama', avatar: 'https://picsum.photos/100/100?random=1', color: 'bg-pink-100 text-pink-700', role: 'parent' },
-  { id: '2', name: 'Papa', avatar: 'https://picsum.photos/100/100?random=2', color: 'bg-blue-100 text-blue-700', role: 'parent' },
-  { id: '3', name: 'Leo', avatar: 'https://picsum.photos/100/100?random=3', color: 'bg-green-100 text-green-700', role: 'child' },
-  { id: '4', name: 'Mia', avatar: 'https://picsum.photos/100/100?random=4', color: 'bg-yellow-100 text-yellow-700', role: 'child' },
-];
-
-const useStickyState = <T,>(key: string, defaultValue: T): [T, React.Dispatch<React.SetStateAction<T>>] => {
+// Helper for local settings (Darkmode/Language) - keep this synchronous/local for best UX
+const useLocalSetting = <T,>(key: string, defaultValue: T): [T, React.Dispatch<React.SetStateAction<T>>] => {
   const [value, setValue] = useState<T>(() => {
     try {
       const stickyValue = localStorage.getItem(key);
       return stickyValue !== null ? JSON.parse(stickyValue) : defaultValue;
-    } catch (e) {
-      console.error("Error reading from localStorage", e);
+    } catch {
       return defaultValue;
     }
   });
 
   useEffect(() => {
-    try {
-      localStorage.setItem(key, JSON.stringify(value));
-    } catch (e) {
-      if (e instanceof DOMException && (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED')) {
-         alert("Speicher voll!");
-      }
-    }
+    localStorage.setItem(key, JSON.stringify(value));
   }, [key, value]);
   
   return [value, setValue];
 };
 
 const App: React.FC = () => {
-  // Persistent State
-  const [family, setFamily] = useStickyState<FamilyMember[]>('fh_family', INITIAL_FAMILY);
-  const [events, setEvents] = useStickyState<CalendarEvent[]>('fh_events', [
-    { id: '1', title: 'Fußballtraining Leo', date: new Date().toISOString().split('T')[0], time: '17:00', endTime: '18:30', assignedTo: ['3'], location: 'Sportplatz', description: 'Mitnehmen: Wasserflasche' },
-  ]);
-  const [shoppingList, setShoppingList] = useStickyState<ShoppingItem[]>('fh_shopping', [
-    { id: '1', name: 'Milch', checked: false },
-    { id: '2', name: 'Brot', checked: true },
-  ]);
+  // --- Data State (Managed by Backend) ---
+  const [loadingData, setLoadingData] = useState(true);
   
-  const [householdTasks, setHouseholdTasks] = useStickyState<Task[]>('fh_household', [
-    { id: '101', title: 'Müll rausbringen', done: false, assignedTo: '3', type: 'household' },
-  ]);
-  const [personalTasks, setPersonalTasks] = useStickyState<Task[]>('fh_personal', []);
-  const [mealPlan, setMealPlan] = useStickyState<MealPlan[]>('fh_mealPlan', []);
-  const [mealRequests, setMealRequests] = useStickyState<MealRequest[]>('fh_mealRequests', []);
-  const [weatherFavorites, setWeatherFavorites] = useStickyState<SavedLocation[]>('fh_weather_favs', []);
-  const [recipes, setRecipes] = useStickyState<Recipe[]>('fh_recipes', []);
+  const [family, setFamily] = useState<FamilyMember[]>([]);
+  const [events, setEvents] = useState<CalendarEvent[]>([]);
+  const [shoppingList, setShoppingList] = useState<ShoppingItem[]>([]);
+  const [householdTasks, setHouseholdTasks] = useState<Task[]>([]);
+  const [personalTasks, setPersonalTasks] = useState<Task[]>([]);
+  const [mealPlan, setMealPlan] = useState<MealPlan[]>([]);
+  const [mealRequests, setMealRequests] = useState<MealRequest[]>([]);
+  const [weatherFavorites, setWeatherFavorites] = useState<SavedLocation[]>([]);
+  const [recipes, setRecipes] = useState<Recipe[]>([]);
   
-  // Settings
-  const [darkMode, setDarkMode] = useStickyState<boolean>('fh_darkmode', false);
-  const [language, setLanguage] = useStickyState<Language>('fh_language', 'de');
+  // --- Local Settings ---
+  const [darkMode, setDarkMode] = useLocalSetting<boolean>('fh_darkmode', false);
+  const [language, setLanguage] = useLocalSetting<Language>('fh_language', 'de');
 
-  // Session State
+  // --- Session State ---
   const [currentUser, setCurrentUser] = useState<FamilyMember | null>(null);
   const [currentRoute, setCurrentRoute] = useState<AppRoute>(AppRoute.DASHBOARD);
 
@@ -77,6 +58,44 @@ const App: React.FC = () => {
   const [loginUser, setLoginUser] = useState<FamilyMember | null>(null);
   const [passwordInput, setPasswordInput] = useState('');
   const [loginError, setLoginError] = useState('');
+  
+  // Setup State (for fresh DB)
+  const [newMemberName, setNewMemberName] = useState('');
+  const [creatingUser, setCreatingUser] = useState(false);
+
+  // Initial Data Load
+  useEffect(() => {
+      const loadAll = async () => {
+          try {
+              const [fam, ev, shop, house, pers, meals, reqs, weath, rec] = await Promise.all([
+                  Backend.family.getAll(),
+                  Backend.events.getAll(),
+                  Backend.shopping.getAll(),
+                  Backend.householdTasks.getAll(),
+                  Backend.personalTasks.getAll(),
+                  Backend.mealPlan.getAll(),
+                  Backend.mealRequests.getAll(),
+                  Backend.weatherFavorites.getAll(),
+                  Backend.recipes.getAll()
+              ]);
+              
+              setFamily(fam);
+              setEvents(ev);
+              setShoppingList(shop);
+              setHouseholdTasks(house);
+              setPersonalTasks(pers);
+              setMealPlan(meals);
+              setMealRequests(reqs);
+              setWeatherFavorites(weath);
+              setRecipes(rec);
+          } catch (e) {
+              console.error("Failed to load backend data", e);
+          } finally {
+              setLoadingData(false);
+          }
+      };
+      loadAll();
+  }, []);
 
   // Apply Dark Mode
   useEffect(() => {
@@ -87,52 +106,121 @@ const App: React.FC = () => {
     }
   }, [darkMode]);
 
-  // --- Handlers ---
-  const addEvent = (event: CalendarEvent) => setEvents([...events, event]);
-  const updateEvent = (id: string, updates: Partial<CalendarEvent>) => setEvents(events.map(e => e.id === id ? { ...e, ...updates } : e));
-  const deleteEvent = (id: string) => setEvents(events.filter(e => e.id !== id));
+  // --- Handlers (Optimistic Updates + Backend Sync) ---
   
-  const toggleShoppingItem = (id: string) => setShoppingList(shoppingList.map(item => item.id === id ? { ...item, checked: !item.checked } : item));
-  const addShoppingItem = (name: string) => setShoppingList([...shoppingList, { id: Date.now().toString(), name, checked: false }]);
-  const deleteShoppingItem = (id: string) => setShoppingList(shoppingList.filter(item => item.id !== id));
+  const addEvent = async (event: CalendarEvent) => {
+      setEvents(prev => [...prev, event]); // Optimistic
+      await Backend.events.add(event);
+  };
+  const updateEvent = async (id: string, updates: Partial<CalendarEvent>) => {
+      setEvents(prev => prev.map(e => e.id === id ? { ...e, ...updates } : e));
+      await Backend.events.update(id, updates);
+  };
+  const deleteEvent = async (id: string) => {
+      setEvents(prev => prev.filter(e => e.id !== id));
+      await Backend.events.delete(id);
+  };
   
-  const addIngredientsToShopping = (ingredients: string[]) => {
+  const toggleShoppingItem = async (id: string) => {
+      const item = shoppingList.find(i => i.id === id);
+      if (item) {
+          const newItem = { ...item, checked: !item.checked };
+          setShoppingList(prev => prev.map(i => i.id === id ? newItem : i));
+          await Backend.shopping.update(id, { checked: newItem.checked });
+      }
+  };
+  const addShoppingItem = async (name: string) => {
+      const newItem = { id: Date.now().toString(), name, checked: false };
+      setShoppingList(prev => [...prev, newItem]);
+      await Backend.shopping.add(newItem);
+  };
+  const deleteShoppingItem = async (id: string) => {
+      setShoppingList(prev => prev.filter(i => i.id !== id));
+      await Backend.shopping.delete(id);
+  };
+  const addIngredientsToShopping = async (ingredients: string[]) => {
       const newItems = ingredients.map(ing => ({ id: Date.now().toString() + Math.random(), name: ing, checked: false }));
-      setShoppingList([...shoppingList, ...newItems]);
+      setShoppingList(prev => [...prev, ...newItems]);
+      const fullList = await Backend.shopping.getAll();
+      await Backend.shopping.setAll([...fullList, ...newItems]);
   };
 
-  const addHouseholdTask = (title: string, assignedTo: string) => setHouseholdTasks([...householdTasks, { id: Date.now().toString(), title, done: false, assignedTo, type: 'household' }]);
-  const addPersonalTask = (title: string) => setPersonalTasks([...personalTasks, { id: Date.now().toString(), title, done: false, type: 'personal' }]);
-  const toggleTask = (id: string, type: 'household' | 'personal') => {
-    if (type === 'household') setHouseholdTasks(householdTasks.map(t => t.id === id ? { ...t, done: !t.done } : t));
-    else setPersonalTasks(personalTasks.map(t => t.id === id ? { ...t, done: !t.done } : t));
+  const addHouseholdTask = async (title: string, assignedTo: string) => {
+      const task: Task = { id: Date.now().toString(), title, done: false, assignedTo, type: 'household' };
+      setHouseholdTasks(prev => [...prev, task]);
+      await Backend.householdTasks.add(task);
   };
-  const deleteTask = (id: string, type: 'household' | 'personal') => {
-      if (type === 'household') setHouseholdTasks(householdTasks.filter(t => t.id !== id));
-      else setPersonalTasks(personalTasks.filter(t => t.id !== id));
+  const addPersonalTask = async (title: string) => {
+      const task: Task = { id: Date.now().toString(), title, done: false, type: 'personal' };
+      setPersonalTasks(prev => [...prev, task]);
+      await Backend.personalTasks.add(task);
+  };
+  const toggleTask = async (id: string, type: 'household' | 'personal') => {
+      if (type === 'household') {
+          const task = householdTasks.find(t => t.id === id);
+          if (task) {
+              setHouseholdTasks(prev => prev.map(t => t.id === id ? { ...t, done: !t.done } : t));
+              await Backend.householdTasks.update(id, { done: !task.done });
+          }
+      } else {
+          const task = personalTasks.find(t => t.id === id);
+          if (task) {
+              setPersonalTasks(prev => prev.map(t => t.id === id ? { ...t, done: !t.done } : t));
+              await Backend.personalTasks.update(id, { done: !task.done });
+          }
+      }
+  };
+  const deleteTask = async (id: string, type: 'household' | 'personal') => {
+      if (type === 'household') {
+          setHouseholdTasks(prev => prev.filter(t => t.id !== id));
+          await Backend.householdTasks.delete(id);
+      } else {
+          setPersonalTasks(prev => prev.filter(t => t.id !== id));
+          await Backend.personalTasks.delete(id);
+      }
   };
 
-  const updateMealPlan = (plan: MealPlan[]) => setMealPlan(plan);
-  const addMealToPlan = (day: string, mealName: string, ingredients: string[]) => {
+  const updateMealPlan = async (plan: MealPlan[]) => {
+      setMealPlan(plan);
+      await Backend.mealPlan.setAll(plan);
+  };
+  const addMealToPlan = async (day: string, mealName: string, ingredients: string[]) => {
       const filtered = mealPlan.filter(m => m.day !== day);
-      setMealPlan([...filtered, { id: Date.now().toString(), day, mealName, ingredients, recipeHint: 'Aus Rezeptlager' }]);
+      const newMeal = { id: Date.now().toString(), day, mealName, ingredients, recipeHint: 'Aus Rezeptlager' };
+      const newPlan = [...filtered, newMeal];
+      setMealPlan(newPlan);
+      await Backend.mealPlan.setAll(newPlan);
   };
-  const addMealRequest = (dishName: string) => currentUser && setMealRequests([...mealRequests, { id: Date.now().toString(), dishName, requestedBy: currentUser.id, createdAt: new Date().toISOString() }]);
-  const deleteMealRequest = (id: string) => setMealRequests(mealRequests.filter(r => r.id !== id));
-  const addRecipe = (recipe: Recipe) => setRecipes([...recipes, recipe]);
-  const deleteRecipe = (id: string) => setRecipes(recipes.filter(r => r.id !== id));
+  const addMealRequest = async (dishName: string) => {
+      if (currentUser) {
+          const req: MealRequest = { id: Date.now().toString(), dishName, requestedBy: currentUser.id, createdAt: new Date().toISOString() };
+          setMealRequests(prev => [...prev, req]);
+          await Backend.mealRequests.add(req);
+      }
+  };
+  const deleteMealRequest = async (id: string) => {
+      setMealRequests(prev => prev.filter(r => r.id !== id));
+      await Backend.mealRequests.delete(id);
+  };
+  const addRecipe = async (recipe: Recipe) => {
+      setRecipes(prev => [...prev, recipe]);
+      await Backend.recipes.add(recipe);
+  };
+  const deleteRecipe = async (id: string) => {
+      setRecipes(prev => prev.filter(r => r.id !== id));
+      await Backend.recipes.delete(id);
+  };
 
-  const updateFamilyMember = (id: string, updates: Partial<FamilyMember>) => {
-    const newFamily = family.map(member => member.id === id ? { ...member, ...updates } : member);
-    setFamily(newFamily);
+  const updateFamilyMember = async (id: string, updates: Partial<FamilyMember>) => {
+    setFamily(prev => prev.map(member => member.id === id ? { ...member, ...updates } : member));
     if (currentUser && currentUser.id === id) setCurrentUser({ ...currentUser, ...updates });
+    await Backend.family.update(id, updates);
   };
 
-  // Password Reset Logic for Parent
-  const resetMemberPassword = (id: string) => {
-      // For simplicity, just clearing the password so they can set a new one
-      const newFamily = family.map(member => member.id === id ? { ...member, password: undefined } : member);
-      setFamily(newFamily);
+  const resetMemberPassword = async (id: string) => {
+      const updates = { password: undefined };
+      setFamily(prev => prev.map(member => member.id === id ? { ...member, ...updates } : member));
+      await Backend.family.update(id, updates);
   };
 
   const handleLogout = () => {
@@ -143,19 +231,52 @@ const App: React.FC = () => {
     setPasswordInput('');
   };
 
-  const toggleWeatherFavorite = (location: SavedLocation) => {
+  const toggleWeatherFavorite = async (location: SavedLocation) => {
       const exists = weatherFavorites.find(f => f.name === location.name);
-      if (exists) setWeatherFavorites(weatherFavorites.filter(f => f.name !== location.name));
-      else setWeatherFavorites([...weatherFavorites, location]);
+      if (exists) {
+          setWeatherFavorites(prev => prev.filter(f => f.name !== location.name));
+          await Backend.weatherFavorites.delete(exists.id);
+      } else {
+          setWeatherFavorites(prev => [...prev, location]);
+          await Backend.weatherFavorites.add(location);
+      }
   };
 
-  // --- Login Logic ---
+  // --- Login & Setup Logic ---
   const handleUserSelect = (member: FamilyMember) => {
       setLoginUser(member);
       setPasswordInput('');
       setLoginError('');
       if (member.password) setLoginStep('enter-pass');
       else setLoginStep('set-pass');
+  };
+
+  const handleCreateFirstMember = async (e: React.FormEvent) => {
+      e.preventDefault();
+      if (!newMemberName.trim()) return;
+      setCreatingUser(true);
+
+      const randomId = Math.floor(Math.random() * 1000);
+      const newMember: FamilyMember = {
+          id: Date.now().toString(),
+          name: newMemberName.trim(),
+          avatar: `https://picsum.photos/200/200?random=${randomId}`,
+          color: 'bg-blue-100 text-blue-700',
+          role: 'parent'
+      };
+
+      try {
+          await Backend.family.add(newMember);
+          const updatedFamily = await Backend.family.getAll();
+          setFamily(updatedFamily);
+          // Auto login new user
+          const createdUser = updatedFamily.find(u => u.id === newMember.id) || newMember;
+          setCurrentUser(createdUser);
+      } catch (err) {
+          console.error("Setup failed", err);
+      } finally {
+          setCreatingUser(false);
+      }
   };
 
   const handlePasswordSubmit = (e: React.FormEvent) => {
@@ -171,6 +292,17 @@ const App: React.FC = () => {
       }
   };
 
+  // Initial Loading Screen
+  if (loadingData) {
+      return (
+          <div className="min-h-screen bg-white dark:bg-gray-900 flex flex-col items-center justify-center">
+              <Logo size={80} className="animate-pulse mb-4" />
+              <Loader2 className="animate-spin text-blue-500" size={32} />
+              <p className="mt-4 text-gray-500 font-medium">Lade Familiendaten...</p>
+          </div>
+      );
+  }
+
   // Login Screen
   if (!currentUser) {
     return (
@@ -181,23 +313,50 @@ const App: React.FC = () => {
            <p className="text-gray-500 dark:text-gray-400">{t('login.welcome', language)}</p>
         </div>
         
-        <div className="grid grid-cols-2 gap-6 w-full max-w-sm animate-slide-in">
-          {family.map(member => (
-            <button 
-              key={member.id}
-              onClick={() => handleUserSelect(member)}
-              className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 flex flex-col items-center hover:scale-105 active:scale-95 transition-all group relative"
-            >
-              <img src={member.avatar} alt={member.name} className="w-20 h-20 rounded-full mb-4 object-cover ring-4 ring-gray-50 dark:ring-gray-700 shadow-sm group-hover:ring-blue-100 dark:group-hover:ring-blue-900 transition" />
-              <span className="font-bold text-lg text-gray-800 dark:text-gray-200">{member.name}</span>
-              {member.password && (
-                  <div className="absolute top-3 right-3 text-gray-300 dark:text-gray-600">
-                      <Lock size={16} />
-                  </div>
-              )}
-            </button>
-          ))}
-        </div>
+        {family.length > 0 ? (
+            <div className="grid grid-cols-2 gap-6 w-full max-w-sm animate-slide-in">
+              {family.map(member => (
+                <button 
+                  key={member.id}
+                  onClick={() => handleUserSelect(member)}
+                  className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 flex flex-col items-center hover:scale-105 active:scale-95 transition-all group relative"
+                >
+                  <img src={member.avatar} alt={member.name} className="w-20 h-20 rounded-full mb-4 object-cover ring-4 ring-gray-50 dark:ring-gray-700 shadow-sm group-hover:ring-blue-100 dark:group-hover:ring-blue-900 transition" />
+                  <span className="font-bold text-lg text-gray-800 dark:text-gray-200">{member.name}</span>
+                  {member.password && (
+                      <div className="absolute top-3 right-3 text-gray-300 dark:text-gray-600">
+                          <Lock size={16} />
+                      </div>
+                  )}
+                </button>
+              ))}
+            </div>
+        ) : (
+            // Empty State / Setup View
+            <div className="w-full max-w-xs animate-fade-in">
+                <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 text-center">
+                    <h2 className="text-xl font-bold text-gray-800 dark:text-white mb-2">Neu hier?</h2>
+                    <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">Erstelle das erste Profil für deine Familie.</p>
+                    <form onSubmit={handleCreateFirstMember}>
+                        <input 
+                            type="text"
+                            placeholder="Dein Name (z.B. Mama)"
+                            value={newMemberName}
+                            onChange={(e) => setNewMemberName(e.target.value)}
+                            className="w-full bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-xl px-4 py-3 text-center text-lg mb-4 outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                            autoFocus
+                        />
+                        <button 
+                            type="submit"
+                            disabled={!newMemberName.trim() || creatingUser}
+                            className="w-full bg-blue-600 text-white font-bold py-3 rounded-xl shadow-lg active:scale-95 transition disabled:opacity-50 flex justify-center items-center"
+                        >
+                            {creatingUser ? <Loader2 className="animate-spin" size={20}/> : <span className="flex items-center">Los geht's <ArrowRight size={18} className="ml-2"/></span>}
+                        </button>
+                    </form>
+                </div>
+            </div>
+        )}
 
         {/* Password Modal */}
         {(loginStep === 'enter-pass' || loginStep === 'set-pass') && loginUser && (
