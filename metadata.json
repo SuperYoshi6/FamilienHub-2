@@ -1,0 +1,7 @@
+{
+  "name": "FamilienHub 2",
+  "description": "Die ultimative Organisations-App für Familien. Gemeinsame Kalender, smarte Einkaufslisten und KI-gestützte Freizeitplanung.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}

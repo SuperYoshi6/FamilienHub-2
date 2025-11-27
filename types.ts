@@ -1,0 +1,125 @@
+
+export interface FamilyMember {
+  id: string;
+  name: string;
+  avatar: string;
+  color: string;
+  role: 'parent' | 'child';
+  password?: string; // Optional password for login
+}
+
+export interface CalendarEvent {
+  id: string;
+  title: string;
+  date: string; // YYYY-MM-DD
+  time: string; // HH:MM
+  endTime?: string; // HH:MM
+  location?: string;
+  description?: string;
+  assignedTo: string[]; // IDs of family members
+}
+
+export interface ShoppingItem {
+  id: string;
+  name: string;
+  checked: boolean;
+  category?: string;
+}
+
+export interface Task {
+  id: string;
+  title: string;
+  done: boolean;
+  assignedTo?: string; // ID of family member (for household)
+  type: 'household' | 'personal';
+}
+
+export interface Recipe {
+  id: string;
+  name: string;
+  ingredients: string[];
+  image?: string; // Base64 or URL
+  description?: string;
+}
+
+export interface MealPlan {
+  id: string;
+  day: string;
+  mealName: string;
+  ingredients: string[];
+  recipeHint: string;
+}
+
+export interface MealRequest {
+  id: string;
+  dishName: string;
+  requestedBy: string; // FamilyMember ID
+  createdAt: string;
+}
+
+export enum AppRoute {
+  DASHBOARD = 'dashboard',
+  CALENDAR = 'calendar',
+  LISTS = 'lists',
+  MEALS = 'meals',
+  ACTIVITIES = 'activities',
+  SETTINGS = 'settings',
+  WEATHER = 'weather'
+}
+
+export interface PlaceRecommendation {
+  title: string;
+  address?: string;
+  rating?: string;
+  uri?: string;
+}
+
+export interface WeatherMetric {
+  id: string;
+  label: string;
+  value: string;
+  icon: 'wind' | 'droplets' | 'sun' | 'thermometer' | 'eye' | 'gauge' | 'sunrise' | 'sunset' | 'humidity';
+  colorClass?: string;
+}
+
+export interface SavedLocation {
+  id: string;
+  name: string;
+  lat: number;
+  lng: number;
+}
+
+export interface HourlyForecast {
+  time: string[];
+  temperature_2m: number[];
+  weather_code: number[];
+}
+
+export interface WeatherData {
+  current: {
+    temperature_2m: number;
+    wind_speed_10m: number;
+    relative_humidity_2m: number;
+    apparent_temperature: number;
+    is_day: number;
+    precipitation: number;
+    weather_code: number;
+    surface_pressure: number;
+    visibility: number;
+  };
+  daily: {
+    time: string[];
+    uv_index_max: number[];
+    temperature_2m_max: number[];
+    temperature_2m_min: number[];
+    sunrise: string[];
+    sunset: string[];
+    weather_code: number[];
+    precipitation_probability_max?: number[];
+  };
+  hourly: {
+    time: string[];
+    temperature_2m: number[];
+    weather_code: number[];
+  }
+}
