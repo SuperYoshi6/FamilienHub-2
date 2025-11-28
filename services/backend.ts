@@ -1,30 +1,25 @@
-import { FamilyMember, CalendarEvent, ShoppingItem, Task, MealPlan, MealRequest, SavedLocation, Recipe } from "../types";
+import { FamilyMember, CalendarEvent, ShoppingItem, Task, MealPlan, MealRequest, SavedLocation, Recipe, NewsItem, FeedbackItem } from "../types";
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 // --- INITIAL DATA MOCKS (Fallback) ---
 const INITIAL_FAMILY: FamilyMember[] = [
-  { id: '1', name: 'Mama', avatar: 'https://picsum.photos/100/100?random=1', color: 'bg-pink-100 text-pink-700', role: 'parent' },
-  { id: '2', name: 'Papa', avatar: 'https://picsum.photos/100/100?random=2', color: 'bg-blue-100 text-blue-700', role: 'parent' },
-  { id: '3', name: 'Leo', avatar: 'https://picsum.photos/100/100?random=3', color: 'bg-green-100 text-green-700', role: 'child' },
-  { id: '4', name: 'Mia', avatar: 'https://picsum.photos/100/100?random=4', color: 'bg-yellow-100 text-yellow-700', role: 'child' },
+    {
+        id: 'admin_user',
+        name: 'Administrator',
+        avatar: 'https://ui-avatars.com/api/?name=Admin&background=000&color=fff',
+        color: 'bg-gray-800 text-white',
+        role: 'admin',
+        password: 'admin006' 
+    }
 ];
-
-const INITIAL_EVENTS: CalendarEvent[] = [
-    { id: '1', title: 'Fußballtraining Leo', date: new Date().toISOString().split('T')[0], time: '17:00', endTime: '18:30', assignedTo: ['3'], location: 'Sportplatz', description: 'Mitnehmen: Wasserflasche' },
-];
-
-const INITIAL_SHOPPING: ShoppingItem[] = [
-    { id: '1', name: 'Milch', checked: false },
-    { id: '2', name: 'Brot', checked: true },
-];
-
-const INITIAL_TASKS: Task[] = [
-    { id: '101', title: 'Müll rausbringen', done: false, assignedTo: '3', type: 'household' },
-];
+const INITIAL_EVENTS: CalendarEvent[] = [];
+const INITIAL_SHOPPING: ShoppingItem[] = [];
+const INITIAL_TASKS: Task[] = [];
 
 // --- SUPABASE CONFIGURATION ---
-const SUPABASE_URL = 'https://hjkmfodzhradtkeiyele.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imhqa21mb2R6aHJhZHRrZWl5ZWxlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI0ODIwNjEsImV4cCI6MjA2ODA1ODA2MX0.2cfezsLcT6x3KI9VqzrHntP80O-cy0JQUb7UK3Mnai8';
+// BITTE HIER DEINE DATEN EINTRAGEN DAMIT SUPABASE FUNKTIONIERT
+const SUPABASE_URL = ''; 
+const SUPABASE_KEY = '';
 
 let supabase: SupabaseClient | null = null;
 
@@ -36,7 +31,7 @@ if (SUPABASE_URL && SUPABASE_KEY) {
         console.error("Supabase init failed:", e);
     }
 } else {
-    console.log("💾 Running in LocalStorage Mode (No Supabase keys found)");
+    console.log("💾 Running in LocalStorage Mode (Keys not configured)");
 }
 
 // --- INTERFACE ---
@@ -59,7 +54,9 @@ class LocalStorageCollection<T extends { id: string }> implements ICollection<T>
     private getStored(): T[] {
         try {
             const item = localStorage.getItem(this.key);
-            return item ? JSON.parse(item) : this.defaultVal;
+            const data = item ? JSON.parse(item) : this.defaultVal;
+            console.log(`[LocalStorage] Loaded ${data.length} items from ${this.key}`);
+            return data;
         } catch {
             return this.defaultVal;
         }
@@ -68,6 +65,7 @@ class LocalStorageCollection<T extends { id: string }> implements ICollection<T>
     private setStored(data: T[]) {
         try {
             localStorage.setItem(this.key, JSON.stringify(data));
+            console.log(`[LocalStorage] Saved to ${this.key}`);
         } catch (e) {
             console.error("Storage full or error", e);
         }
@@ -83,6 +81,7 @@ class LocalStorageCollection<T extends { id: string }> implements ICollection<T>
         const data = this.getStored();
         const newData = [...data, item];
         this.setStored(newData);
+        console.log(`[LocalStorage] Added item to ${this.key}`, item);
         return newData;
     }
 
@@ -91,6 +90,7 @@ class LocalStorageCollection<T extends { id: string }> implements ICollection<T>
         const data = this.getStored();
         const newData = data.map(d => d.id === id ? { ...d, ...updates } : d);
         this.setStored(newData);
+        console.log(`[LocalStorage] Updated item ${id} in ${this.key}`, updates);
         return newData;
     }
 
@@ -99,12 +99,14 @@ class LocalStorageCollection<T extends { id: string }> implements ICollection<T>
         const data = this.getStored();
         const newData = data.filter(d => d.id !== id);
         this.setStored(newData);
+        console.log(`[LocalStorage] Deleted item ${id} from ${this.key}`);
         return newData;
     }
 
     async setAll(items: T[]): Promise<T[]> {
         await this.delay();
         this.setStored(items);
+        console.log(`[LocalStorage] Set all items for ${this.key} (Count: ${items.length})`);
         return items;
     }
 }
@@ -117,38 +119,52 @@ class SupabaseCollection<T extends { id: string }> implements ICollection<T> {
         if (!supabase) return [];
         const { data, error } = await supabase.from(this.table).select('*');
         if (error) {
-            console.error(`Supabase load error (${this.table}):`, error);
+            console.error(`[Supabase] Load error (${this.table}):`, error);
             return [];
         }
+        console.log(`[Supabase] Loaded ${data.length} items from ${this.table}`);
         return data as T[];
     }
 
     async add(item: T): Promise<T[]> {
         if (!supabase) return [];
         const { error } = await supabase.from(this.table).insert(item);
-        if (error) console.error(`Supabase add error (${this.table}):`, error);
+        if (error) console.error(`[Supabase] Add error (${this.table}):`, error);
+        else console.log(`[Supabase] Added item to ${this.table}`);
         return this.getAll();
     }
 
     async update(id: string, updates: Partial<T>): Promise<T[]> {
         if (!supabase) return [];
         const { error } = await supabase.from(this.table).update(updates).eq('id', id);
-        if (error) console.error(`Supabase update error (${this.table}):`, error);
+        if (error) console.error(`[Supabase] Update error (${this.table}):`, error);
+        else console.log(`[Supabase] Updated item ${id} in ${this.table}`);
         return this.getAll();
     }
 
     async delete(id: string): Promise<T[]> {
         if (!supabase) return [];
         const { error } = await supabase.from(this.table).delete().eq('id', id);
-        if (error) console.error(`Supabase delete error (${this.table}):`, error);
+        if (error) console.error(`[Supabase] Delete error (${this.table}):`, error);
+        else console.log(`[Supabase] Deleted item ${id} from ${this.table}`);
         return this.getAll();
     }
 
     async setAll(items: T[]): Promise<T[]> {
         if (!supabase) return [];
-        // Using upsert to update existing or insert new items
-        const { error } = await supabase.from(this.table).upsert(items);
-        if (error) console.error(`Supabase setAll/upsert error (${this.table}):`, error);
+        
+        console.log(`[Supabase] Syncing all items for ${this.table}...`);
+        // 1. Delete items that are NOT in the new list (Sync)
+        if (items.length > 0) {
+            const ids = items.map(i => i.id);
+            const { error: deleteError } = await supabase.from(this.table).delete().not('id', 'in', `(${ids.join(',')})`);
+            if (deleteError) console.error(`[Supabase] Sync/Delete error (${this.table}):`, deleteError);
+        }
+
+        // 2. Upsert new/updated items
+        const { error: upsertError } = await supabase.from(this.table).upsert(items);
+        if (upsertError) console.error(`[Supabase] Sync/Upsert error (${this.table}):`, upsertError);
+        
         return this.getAll();
     }
 }
@@ -158,13 +174,15 @@ class SupabaseCollection<T extends { id: string }> implements ICollection<T> {
 const TABLE_MAPPING: Record<string, string> = {
     'fh_family': 'family',
     'fh_events': 'events',
+    'fh_news': 'news',
     'fh_shopping': 'shopping',
     'fh_household': 'household_tasks',
     'fh_personal': 'personal_tasks',
     'fh_mealPlan': 'meal_plans',
     'fh_mealRequests': 'meal_requests',
     'fh_recipes': 'recipes',
-    'fh_weather_favs': 'weather_favs'
+    'fh_weather_favs': 'weather_favs',
+    'fh_feedback': 'feedback'
 };
 
 const createCollection = <T extends { id: string }>(key: string, defaultVal: T[]) => {
@@ -181,6 +199,7 @@ const createCollection = <T extends { id: string }>(key: string, defaultVal: T[]
 export const Backend = {
     family: createCollection<FamilyMember>('fh_family', INITIAL_FAMILY),
     events: createCollection<CalendarEvent>('fh_events', INITIAL_EVENTS),
+    news: createCollection<NewsItem>('fh_news', []),
     shopping: createCollection<ShoppingItem>('fh_shopping', INITIAL_SHOPPING),
     householdTasks: createCollection<Task>('fh_household', INITIAL_TASKS),
     personalTasks: createCollection<Task>('fh_personal', []),
@@ -188,4 +207,5 @@ export const Backend = {
     mealRequests: createCollection<MealRequest>('fh_mealRequests', []),
     recipes: createCollection<Recipe>('fh_recipes', []),
     weatherFavorites: createCollection<SavedLocation>('fh_weather_favs', []),
+    feedback: createCollection<FeedbackItem>('fh_feedback', []),
 };

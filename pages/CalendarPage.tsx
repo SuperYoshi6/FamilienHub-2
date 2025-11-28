@@ -1,28 +1,35 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import Header from '../components/Header';
-import { CalendarEvent, FamilyMember } from '../types';
-import { MapPin, Calendar as CalendarIcon, ChevronLeft, ChevronRight, X, Clock, Trash2, Plus, Edit2 } from 'lucide-react';
+import { CalendarEvent, FamilyMember, NewsItem } from '../types';
+import { MapPin, Calendar as CalendarIcon, ChevronLeft, ChevronRight, X, Clock, Trash2, Plus, Edit2, Layout, FileText, Image as ImageIcon, Camera, Loader2, Link as LinkIcon, Hash, Users, User } from 'lucide-react';
+import { compressImage } from '../services/imageUtils';
 
 interface CalendarPageProps {
   events: CalendarEvent[];
+  news: NewsItem[];
   family: FamilyMember[];
   currentUser: FamilyMember;
   onAddEvent: (event: CalendarEvent) => void;
   onUpdateEvent: (id: string, updates: Partial<CalendarEvent>) => void;
   onDeleteEvent: (id: string) => void;
+  onAddNews: (item: NewsItem) => void;
+  onDeleteNews: (id: string) => void;
   onProfileClick: () => void;
 }
 
-const CalendarPage: React.FC<CalendarPageProps> = ({ events, family, currentUser, onAddEvent, onUpdateEvent, onDeleteEvent, onProfileClick }) => {
-  // State
-  const [currentMonth, setCurrentMonth] = useState(new Date());
+type Tab = 'calendar' | 'news';
 
-  // Modal State
-  const [selectedDate, setSelectedDate] = useState<string | null>(null); // Controls the "Day Detail" modal
-  const [isFormOpen, setIsFormOpen] = useState(false); // Controls the "Add/Edit" form view inside the modal
+const CalendarPage: React.FC<CalendarPageProps> = ({ events, news, family, currentUser, onAddEvent, onUpdateEvent, onDeleteEvent, onAddNews, onDeleteNews, onProfileClick }) => {
+  const [activeTab, setActiveTab] = useState<Tab>('calendar');
+  const [calendarView, setCalendarView] = useState<'family' | 'private'>('family');
+  
+  // Calendar State
+  const [currentMonth, setCurrentMonth] = useState(new Date());
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
   
-  // Form State
+  // Event Form State
   const [manualTitle, setManualTitle] = useState('');
   const [manualDate, setManualDate] = useState('');
   const [manualStartTime, setManualStartTime] = useState('12:00');
@@ -30,9 +37,28 @@ const CalendarPage: React.FC<CalendarPageProps> = ({ events, family, currentUser
   const [manualLocation, setManualLocation] = useState('');
   const [manualDescription, setManualDescription] = useState('');
   const [manualAssignedTo, setManualAssignedTo] = useState<string[]>([currentUser.id]);
-  
+
+  // News State
+  const [showNewsForm, setShowNewsForm] = useState(false);
+  const [newsTitle, setNewsTitle] = useState('');
+  const [newsDesc, setNewsDesc] = useState('');
+  const [newsTag, setNewsTag] = useState('');
+  const [newsImage, setNewsImage] = useState('');
+  const [imageMode, setImageMode] = useState<'upload' | 'url'>('upload');
+  const [newsImageUrlInput, setNewsImageUrlInput] = useState('');
+  const newsFileInputRef = useRef<HTMLInputElement>(null);
+  const [processingImage, setProcessingImage] = useState(false);
+
+  // Filter events before grouping
+  const filteredEvents = events.filter(e => {
+      if (calendarView === 'private') {
+          return e.assignedTo.includes(currentUser.id);
+      }
+      return true;
+  });
+
   // Group events by date
-  const groupedEvents = events.reduce((acc, event) => {
+  const groupedEvents = filteredEvents.reduce((acc, event) => {
     if (!acc[event.date]) acc[event.date] = [];
     acc[event.date].push(event);
     return acc;
@@ -137,6 +163,49 @@ const CalendarPage: React.FC<CalendarPageProps> = ({ events, family, currentUser
     setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + delta, 1));
   };
 
+  // --- News Handlers ---
+  const handleNewsFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (file) {
+          setProcessingImage(true);
+          const reader = new FileReader();
+          reader.onloadend = async () => {
+              const base64 = reader.result as string;
+              const compressed = await compressImage(base64, 800, 0.7);
+              setNewsImage(compressed);
+              setProcessingImage(false);
+          };
+          reader.readAsDataURL(file);
+      }
+  };
+
+  const submitNews = (e: React.FormEvent) => {
+      e.preventDefault();
+      if (!newsTitle.trim()) return;
+
+      const finalImage = imageMode === 'url' ? newsImageUrlInput : newsImage;
+
+      const newItem: NewsItem = {
+          id: Date.now().toString(),
+          title: newsTitle,
+          description: newsDesc,
+          tag: newsTag.startsWith('#') ? newsTag : (newsTag ? `#${newsTag}` : undefined),
+          image: finalImage,
+          createdAt: new Date().toISOString(),
+          authorId: currentUser.id
+      };
+
+      onAddNews(newItem);
+      
+      // Reset
+      setShowNewsForm(false);
+      setNewsTitle('');
+      setNewsDesc('');
+      setNewsTag('');
+      setNewsImage('');
+      setNewsImageUrlInput('');
+  };
+
   const renderMonthView = () => {
     const { year, month, daysInMonth, startOffset } = getMonthData(currentMonth);
     const monthName = currentMonth.toLocaleDateString('de-DE', { month: 'long', year: 'numeric' });
@@ -159,7 +228,7 @@ const CalendarPage: React.FC<CalendarPageProps> = ({ events, family, currentUser
         </div>
 
         {/* Updated Grid: Taller Rows to avoid squeezing */}
-        <div className="grid grid-cols-7 auto-rows-[minmax(90px,auto)] divide-x divide-y divide-gray-100 dark:divide-gray-700 border-b dark:border-gray-700">
+        <div className="grid grid-cols-7 auto-rows-[minmax(80px,auto)] divide-x divide-y divide-gray-100 dark:divide-gray-700 border-b dark:border-gray-700">
            {emptySlots.map((_, i) => <div key={`empty-${i}`} className="bg-gray-50/30 dark:bg-gray-800/30" />)}
            {days.map(day => {
              const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
@@ -179,7 +248,11 @@ const CalendarPage: React.FC<CalendarPageProps> = ({ events, family, currentUser
                  {/* Event Indicators */}
                  <div className="flex flex-col space-y-1 w-full px-1 items-center overflow-hidden">
                     {dayEvents.slice(0, 3).map((ev) => (
-                      <div key={ev.id} className="w-full max-w-[80%] h-1.5 rounded-full bg-blue-400 dark:bg-blue-500/80"></div>
+                      <div 
+                        key={ev.id} 
+                        className="w-full max-w-[80%] h-1.5 rounded-full bg-blue-400 dark:bg-blue-500/80 transition-colors"
+                        title={ev.title}
+                      ></div>
                     ))}
                     {dayEvents.length > 3 && <div className="text-[9px] text-gray-400 leading-none font-bold">+ {dayEvents.length - 3}</div>}
                  </div>
@@ -191,25 +264,197 @@ const CalendarPage: React.FC<CalendarPageProps> = ({ events, family, currentUser
     );
   };
 
+  const renderNewsBoard = () => {
+    return (
+        <div className="animate-fade-in space-y-6">
+            {!showNewsForm && (
+                <div className="flex justify-center">
+                    <button 
+                        onClick={() => setShowNewsForm(true)}
+                        className="bg-indigo-600 text-white px-6 py-3 rounded-xl shadow-lg font-bold flex items-center space-x-2 hover:bg-indigo-700 transition active:scale-95"
+                    >
+                        <Plus size={20} /> <span>Neuigkeit erstellen</span>
+                    </button>
+                </div>
+            )}
+
+            {showNewsForm && (
+                <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg border border-gray-100 dark:border-gray-700 p-4 animate-slide-in">
+                    <div className="flex justify-between items-center mb-4">
+                        <h3 className="font-bold text-gray-800 dark:text-white">Neue Pinnwand-Notiz</h3>
+                        <button onClick={() => setShowNewsForm(false)} className="text-gray-400 hover:text-gray-600"><X size={20}/></button>
+                    </div>
+                    <form onSubmit={submitNews} className="space-y-4">
+                        <input 
+                            type="text" 
+                            placeholder="Titel (z.B. Unser Urlaub)"
+                            value={newsTitle}
+                            onChange={(e) => setNewsTitle(e.target.value)}
+                            className="w-full bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-xl p-3 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                            required
+                        />
+                        <textarea 
+                            placeholder="Beschreibung..."
+                            value={newsDesc}
+                            onChange={(e) => setNewsDesc(e.target.value)}
+                            className="w-full bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-xl p-3 text-sm focus:ring-2 focus:ring-indigo-500 outline-none resize-none"
+                            rows={3}
+                        />
+                         <div className="relative">
+                            <Hash size={16} className="absolute left-3 top-3.5 text-gray-400" />
+                            <input 
+                                type="text" 
+                                placeholder="Tag (optional, z.B. #Sommer)"
+                                value={newsTag}
+                                onChange={(e) => setNewsTag(e.target.value)}
+                                className="w-full bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-xl p-3 pl-9 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                            />
+                        </div>
+
+                        {/* Image Selection */}
+                        <div className="bg-gray-50 dark:bg-gray-750 p-3 rounded-xl border border-dashed border-gray-300 dark:border-gray-600">
+                             <div className="flex gap-2 mb-2">
+                                 <button type="button" onClick={() => setImageMode('upload')} className={`flex-1 py-1 text-xs font-bold rounded-lg transition ${imageMode === 'upload' ? 'bg-white dark:bg-gray-600 shadow-sm' : 'text-gray-400'}`}>Foto hochladen</button>
+                                 <button type="button" onClick={() => setImageMode('url')} className={`flex-1 py-1 text-xs font-bold rounded-lg transition ${imageMode === 'url' ? 'bg-white dark:bg-gray-600 shadow-sm' : 'text-gray-400'}`}>Bild URL</button>
+                             </div>
+                             
+                             {imageMode === 'upload' ? (
+                                 <div className="text-center py-2">
+                                     <input type="file" ref={newsFileInputRef} onChange={handleNewsFileChange} accept="image/*" className="hidden" />
+                                     {newsImage ? (
+                                         <div className="relative inline-block">
+                                             <img src={newsImage} className="h-32 rounded-lg shadow-sm" />
+                                             <button type="button" onClick={() => setNewsImage('')} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1"><X size={12}/></button>
+                                         </div>
+                                     ) : (
+                                         <button type="button" onClick={() => newsFileInputRef.current?.click()} className="flex flex-col items-center justify-center w-full py-4 text-gray-400 hover:text-indigo-500 transition">
+                                             {processingImage ? <Loader2 className="animate-spin mb-1" size={24}/> : <Camera size={24} className="mb-1"/>}
+                                             <span className="text-xs">Tippen zum Auswählen</span>
+                                         </button>
+                                     )}
+                                 </div>
+                             ) : (
+                                 <input 
+                                    type="text"
+                                    placeholder="https://..."
+                                    value={newsImageUrlInput}
+                                    onChange={(e) => setNewsImageUrlInput(e.target.value)}
+                                    className="w-full bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg p-2 text-xs"
+                                 />
+                             )}
+                        </div>
+
+                        <button 
+                            type="submit"
+                            disabled={!newsTitle.trim() || processingImage}
+                            className="w-full bg-indigo-600 text-white font-bold py-3 rounded-xl shadow-lg active:scale-95 transition disabled:opacity-50"
+                        >
+                            Veröffentlichen
+                        </button>
+                    </form>
+                </div>
+            )}
+
+            <div className="grid gap-4">
+                {news.length === 0 && !showNewsForm && (
+                    <div className="text-center py-10 opacity-50">
+                        <FileText size={48} className="mx-auto text-gray-300 dark:text-gray-600 mb-2" />
+                        <p className="text-gray-500">Die Pinnwand ist leer.</p>
+                    </div>
+                )}
+                {news.map(item => {
+                    const author = family.find(f => f.id === item.authorId);
+                    return (
+                        <div key={item.id} className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-hidden group">
+                            {item.image && (
+                                <div className="h-48 w-full overflow-hidden bg-gray-100 dark:bg-gray-900 relative">
+                                    <img src={item.image} className="w-full h-full object-cover transition duration-500 group-hover:scale-105" alt="News" />
+                                </div>
+                            )}
+                            <div className="p-4">
+                                <div className="flex justify-between items-start mb-2">
+                                    <div>
+                                        {item.tag && <span className="text-xs font-bold text-indigo-500 bg-indigo-50 dark:bg-indigo-900/20 px-2 py-0.5 rounded-md mb-2 inline-block">{item.tag}</span>}
+                                        <h3 className="font-bold text-lg text-gray-900 dark:text-white leading-tight">{item.title}</h3>
+                                    </div>
+                                    <button onClick={() => onDeleteNews(item.id)} className="text-gray-300 hover:text-red-500 p-1"><Trash2 size={16}/></button>
+                                </div>
+                                
+                                {item.description && <p className="text-sm text-gray-600 dark:text-gray-300 mb-4 whitespace-pre-line">{item.description}</p>}
+                                
+                                <div className="flex items-center justify-between pt-2 border-t border-gray-50 dark:border-gray-700">
+                                    <div className="flex items-center space-x-2">
+                                        {author ? (
+                                            <>
+                                                <img src={author.avatar} className="w-6 h-6 rounded-full" />
+                                                <span className="text-xs font-medium text-gray-500 dark:text-gray-400">{author.name}</span>
+                                            </>
+                                        ) : (
+                                            <span className="text-xs text-gray-400">Unbekannt</span>
+                                        )}
+                                    </div>
+                                    <span className="text-[10px] text-gray-400">{new Date(item.createdAt).toLocaleDateString()}</span>
+                                </div>
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
+  };
+
   return (
     <>
-      <Header title="Familienkalender" currentUser={currentUser} onProfileClick={onProfileClick} />
-      <div className="p-4 pb-24 relative min-h-[calc(100vh-80px)]">
-        
-        {/* The Month Grid */}
-        {renderMonthView()}
+      <Header title="FamilienHub" currentUser={currentUser} onProfileClick={onProfileClick} />
+      
+      {/* Tabs */}
+      <div className="px-4 mt-2 mb-2">
+        <div className="flex p-1 bg-gray-200 dark:bg-gray-800 rounded-xl">
+          <button 
+            onClick={() => setActiveTab('calendar')}
+            className={`flex-1 py-2 rounded-lg text-xs font-bold flex items-center justify-center space-x-1 transition-all ${activeTab === 'calendar' ? 'bg-white dark:bg-gray-700 shadow-sm text-blue-600 dark:text-white' : 'text-gray-500 dark:text-gray-400'}`}
+          >
+            <CalendarIcon size={14} /> <span>Termine</span>
+          </button>
+          <button 
+            onClick={() => setActiveTab('news')}
+            className={`flex-1 py-2 rounded-lg text-xs font-bold flex items-center justify-center space-x-1 transition-all ${activeTab === 'news' ? 'bg-white dark:bg-gray-700 shadow-sm text-indigo-600 dark:text-white' : 'text-gray-500 dark:text-gray-400'}`}
+          >
+            <Layout size={14} /> <span>Pinnwand</span>
+          </button>
+        </div>
+      </div>
 
-        {/* --- DAY DETAIL / ADD MODAL --- */}
-        {/* Changed z-index to 100 to appear above bottom nav */}
-        {selectedDate && (
+      {activeTab === 'calendar' && (
+          <div className="px-4 mb-2 flex justify-center">
+               <div className="flex bg-gray-100 dark:bg-gray-800 p-0.5 rounded-lg">
+                    <button 
+                        onClick={() => setCalendarView('family')}
+                        className={`flex items-center px-4 py-1.5 rounded-md text-xs font-bold transition space-x-1 ${calendarView === 'family' ? 'bg-white dark:bg-gray-700 shadow-sm text-blue-600 dark:text-white' : 'text-gray-500 dark:text-gray-400'}`}
+                    >
+                        <Users size={12} className="mr-1"/> Familie
+                    </button>
+                    <button 
+                        onClick={() => setCalendarView('private')}
+                        className={`flex items-center px-4 py-1.5 rounded-md text-xs font-bold transition space-x-1 ${calendarView === 'private' ? 'bg-white dark:bg-gray-700 shadow-sm text-blue-600 dark:text-white' : 'text-gray-500 dark:text-gray-400'}`}
+                    >
+                        <User size={12} className="mr-1"/> Privat
+                    </button>
+               </div>
+          </div>
+      )}
+
+      <div className="p-4 pb-24 relative min-h-[calc(100vh-140px)]">
+        
+        {activeTab === 'calendar' && renderMonthView()}
+        {activeTab === 'news' && renderNewsBoard()}
+
+        {/* --- DAY DETAIL / ADD MODAL (Only for Calendar) --- */}
+        {selectedDate && activeTab === 'calendar' && (
            <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center pointer-events-none">
-              {/* Backdrop */}
               <div className="absolute inset-0 bg-black/50 backdrop-blur-sm pointer-events-auto transition-opacity" onClick={closeModal}></div>
-              
-              {/* Modal Content */}
               <div className="bg-white dark:bg-gray-800 w-full max-w-md sm:rounded-2xl rounded-t-2xl shadow-2xl pointer-events-auto transform transition-transform duration-300 max-h-[85vh] flex flex-col animate-slide-up">
-                  
-                  {/* Modal Header */}
                   <div className="flex justify-between items-center p-4 border-b border-gray-100 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800/50 rounded-t-2xl flex-shrink-0">
                       <div>
                           {isFormOpen ? (
@@ -227,11 +472,8 @@ const CalendarPage: React.FC<CalendarPageProps> = ({ events, family, currentUser
                       </button>
                   </div>
 
-                  {/* Modal Body */}
                   <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
-                      
                       {!isFormOpen ? (
-                          // LIST VIEW
                           <div className="space-y-4">
                               {(groupedEvents[selectedDate] || []).length === 0 ? (
                                   <div className="text-center py-12 flex flex-col items-center">
@@ -274,7 +516,6 @@ const CalendarPage: React.FC<CalendarPageProps> = ({ events, family, currentUser
                               )}
                           </div>
                       ) : (
-                          // FORM VIEW
                           <form id="eventForm" onSubmit={handleManualSubmit} className="space-y-5">
                                 <div>
                                     <label className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1.5 block">Titel</label>
@@ -350,10 +591,7 @@ const CalendarPage: React.FC<CalendarPageProps> = ({ events, family, currentUser
                                 </div>
                           </form>
                       )}
-
                   </div>
-
-                  {/* Modal Footer */}
                   <div className="p-4 border-t border-gray-100 dark:border-gray-700 bg-gray-50/80 dark:bg-gray-800/80 backdrop-blur-sm rounded-b-2xl flex-shrink-0">
                       {!isFormOpen ? (
                           <button onClick={openAddFormInModal} className="w-full bg-blue-600 text-white font-bold py-3.5 rounded-xl shadow-lg active:scale-[0.98] transition flex items-center justify-center hover:bg-blue-700">

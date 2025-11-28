@@ -2,12 +2,13 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { WeatherMetric, WeatherData, SavedLocation } from '../types';
 import { fetchWeather, getWeatherDescription } from '../services/weather';
 import { findCoordinates } from '../services/gemini';
-import { Sun, CloudRain, Wind, Droplets, Thermometer, MapPinOff, ArrowLeft, Cloud, CloudSnow, CloudLightning, CloudFog, Moon, Umbrella, Calendar, Eye, Gauge, Sunrise, Sunset, Search, MapPin, Loader2, Star, ArrowRightLeft } from 'lucide-react';
+import { Sun, CloudRain, Wind, Droplets, Thermometer, MapPinOff, ArrowLeft, Cloud, CloudSnow, CloudLightning, CloudFog, Moon, Umbrella, Calendar, Eye, Gauge, Sunrise, Sunset, Search, MapPin, Loader2, Star, ArrowRightLeft, ArrowUp, ArrowDown, Navigation } from 'lucide-react';
 
 interface WeatherPageProps {
   onBack: () => void;
   favorites: SavedLocation[];
   onToggleFavorite: (location: SavedLocation) => void;
+  initialLocation: {lat: number, lng: number, name: string} | null;
 }
 
 // --- Weather Effects Component ---
@@ -119,7 +120,7 @@ const WeatherEffects: React.FC<{ code: number; isDay: number }> = ({ code, isDay
   );
 };
 
-const WeatherPage: React.FC<WeatherPageProps> = ({ onBack, favorites, onToggleFavorite }) => {
+const WeatherPage: React.FC<WeatherPageProps> = ({ onBack, favorites, onToggleFavorite, initialLocation }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<WeatherData | null>(null);
@@ -130,15 +131,12 @@ const WeatherPage: React.FC<WeatherPageProps> = ({ onBack, favorites, onToggleFa
   const [locationName, setLocationName] = useState<string>('Standort');
   const [currentCoords, setCurrentCoords] = useState<{lat: number, lng: number} | null>(null);
 
-  // Metrics (Detail Grid) State
+  // Reordering State (Tap to move)
   const [metrics, setMetrics] = useState<WeatherMetric[]>([]);
-  const [draggedMetricIndex, setDraggedMetricIndex] = useState<number | null>(null);
   const [selectedSwapMetricIndex, setSelectedSwapMetricIndex] = useState<number | null>(null);
-
-  // SECTION REORDERING STATE
-  // 'hourly', 'daily', 'details'
+  
   const [sectionOrder, setSectionOrder] = useState<string[]>(['hourly', 'daily', 'details']);
-  const [selectedSectionSwap, setSelectedSectionSwap] = useState<string | null>(null);
+  const [selectedSwapSectionIndex, setSelectedSwapSectionIndex] = useState<number | null>(null);
 
   const loadWeather = async (lat: number, lng: number, name?: string) => {
     setLoading(true);
@@ -169,26 +167,39 @@ const WeatherPage: React.FC<WeatherPageProps> = ({ onBack, favorites, onToggleFa
     setLoading(false);
   };
 
-  useEffect(() => {
-    if (navigator.geolocation) {
+  const attemptCurrentLocation = () => {
+      setLoading(true);
+      setError(null);
+      if (navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(
             (position) => {
                 loadWeather(position.coords.latitude, position.coords.longitude, "Aktueller Standort");
             },
             (err) => {
+                console.error("Geolocation Error:", err.message);
                 if (err.code === 1) {
                     setError("Standortzugriff verweigert. Bitte suche manuell.");
-                    setIsSearching(true);
                 } else {
-                    console.error("Geolocation Error:", err.message);
                     setError("Standort konnte nicht ermittelt werden.");
                 }
+                setIsSearching(true); // Open search if automatic fails
                 setLoading(false);
             }
         );
+      } else {
+          setError("GPS nicht verfügbar");
+          setLoading(false);
+          setIsSearching(true);
+      }
+  }
+
+  useEffect(() => {
+    // If we have an initial location passed (e.g. from Dashboard or recent cache), use it.
+    if (initialLocation) {
+        loadWeather(initialLocation.lat, initialLocation.lng, initialLocation.name);
     } else {
-        setError("GPS nicht verfügbar");
-        setLoading(false);
+        // Otherwise, try to find current location immediately
+        attemptCurrentLocation();
     }
   }, []);
 
@@ -214,53 +225,53 @@ const WeatherPage: React.FC<WeatherPageProps> = ({ onBack, favorites, onToggleFa
 
   const isFavorite = favorites.some(f => f.name === locationName);
 
-  // --- Metrics Swap Logic ---
+  // --- Swapping Logic (Tap to move) ---
+  const handleSectionClick = (index: number) => {
+      if (selectedSwapSectionIndex === null) {
+          setSelectedSwapSectionIndex(index);
+      } else if (selectedSwapSectionIndex === index) {
+          setSelectedSwapSectionIndex(null);
+      } else {
+          // Swap
+          const newOrder = [...sectionOrder];
+          const temp = newOrder[index];
+          newOrder[index] = newOrder[selectedSwapSectionIndex];
+          newOrder[selectedSwapSectionIndex] = temp;
+          setSectionOrder(newOrder);
+          setSelectedSwapSectionIndex(null);
+      }
+  };
+
   const handleMetricClick = (index: number) => {
       if (selectedSwapMetricIndex === null) {
           setSelectedSwapMetricIndex(index);
       } else if (selectedSwapMetricIndex === index) {
           setSelectedSwapMetricIndex(null);
       } else {
+          // Swap
           const newMetrics = [...metrics];
-          const temp = newMetrics[selectedSwapMetricIndex];
-          newMetrics[selectedSwapMetricIndex] = newMetrics[index];
-          newMetrics[index] = temp;
+          const temp = newMetrics[index];
+          newMetrics[index] = newMetrics[selectedSwapMetricIndex];
+          newMetrics[selectedSwapMetricIndex] = temp;
           setMetrics(newMetrics);
           setSelectedSwapMetricIndex(null);
       }
   };
 
-  const handleDragStartMetric = (index: number) => setDraggedMetricIndex(index);
-  const handleDropMetric = (index: number) => {
-    if (draggedMetricIndex === null) return;
-    const newMetrics = [...metrics];
-    const draggedItem = newMetrics[draggedMetricIndex];
-    newMetrics.splice(draggedMetricIndex, 1);
-    newMetrics.splice(index, 0, draggedItem);
-    setMetrics(newMetrics);
-    setDraggedMetricIndex(null);
-  };
-
-  // --- Section Swap Logic ---
-  const handleSectionHeaderClick = (sectionId: string) => {
-      if (selectedSectionSwap === null) {
-          setSelectedSectionSwap(sectionId);
-      } else if (selectedSectionSwap === sectionId) {
-          setSelectedSectionSwap(null);
-      } else {
-          // Swap sections
-          const newOrder = [...sectionOrder];
-          const idx1 = newOrder.indexOf(selectedSectionSwap);
-          const idx2 = newOrder.indexOf(sectionId);
-          if (idx1 !== -1 && idx2 !== -1) {
-              const temp = newOrder[idx1];
-              newOrder[idx1] = newOrder[idx2];
-              newOrder[idx2] = temp;
-              setSectionOrder(newOrder);
-          }
-          setSelectedSectionSwap(null);
-      }
-  };
+  const SectionHeader = ({ title, index, onClick }: { title: string, index: number, onClick: () => void }) => {
+      const isSelected = selectedSwapSectionIndex === index;
+      return (
+        <div 
+            onClick={onClick}
+            className={`flex justify-between items-center mb-3 px-2 cursor-pointer transition-all rounded-lg py-1 ${isSelected ? 'bg-white/20 ring-1 ring-white/50' : 'hover:bg-white/10'}`}
+        >
+            <h3 className="text-left text-xs font-bold uppercase tracking-wider opacity-80 flex items-center text-yellow-100">
+                {title}
+            </h3>
+            {isSelected && <ArrowRightLeft size={12} className="text-white animate-pulse" />}
+        </div>
+      );
+  }
 
   // --- Helper Icons & Styles ---
   const renderMetricIcon = (iconName: string, className: string) => {
@@ -324,41 +335,39 @@ const WeatherPage: React.FC<WeatherPageProps> = ({ onBack, favorites, onToggleFa
 
   // --- Section Renderers ---
 
-  const renderHourly = () => (
+  const renderHourly = (index: number) => {
+    if (!data) return null;
+    const currentHourIndex = new Date().getHours();
+    const hourlySlice = data.hourly.time.slice(currentHourIndex, currentHourIndex + 25);
+    const tempSlice = data.hourly.temperature_2m.slice(currentHourIndex, currentHourIndex + 25);
+    const codeSlice = data.hourly.weather_code.slice(currentHourIndex, currentHourIndex + 25);
+
+    return (
       <div className="w-full transition-all duration-300">
-          <h3 
-             onClick={() => handleSectionHeaderClick('hourly')}
-             className={`text-left text-xs font-bold uppercase tracking-wider opacity-60 mb-3 px-2 cursor-pointer flex items-center ${selectedSectionSwap === 'hourly' ? 'text-yellow-300 opacity-100 scale-105' : ''}`}
-          >
-             Stündlich {selectedSectionSwap === 'hourly' ? <ArrowRightLeft size={12} className="ml-2 animate-pulse"/> : null}
-          </h3>
+          <SectionHeader title="Stündlich" index={index} onClick={() => handleSectionClick(index)} />
           <div className={`${glassClass} backdrop-blur-lg rounded-3xl p-5 border shadow-sm`}>
               <div className="flex overflow-x-auto gap-6 pb-2 scrollbar-hide">
-                  {data?.hourly.time.slice(0, 24).map((t: string, i: number) => {
+                  {hourlySlice.map((t: string, i: number) => {
                       const date = new Date(t);
                       const hour = date.getHours();
                       const isNow = i === 0;
                       return (
                           <div key={i} className="flex flex-col items-center space-y-3 min-w-[3rem]">
                               <span className="text-xs font-medium opacity-80 whitespace-nowrap">{isNow ? 'Jetzt' : `${hour}:00`}</span>
-                              {getSmallWeatherIcon(data?.hourly.weather_code[i] || 0)}
-                              <span className="font-bold text-lg">{Math.round(data?.hourly.temperature_2m[i] || 0)}°</span>
+                              {getSmallWeatherIcon(codeSlice[i] || 0)}
+                              <span className="font-bold text-lg">{Math.round(tempSlice[i] || 0)}°</span>
                           </div>
                       )
                   })}
               </div>
           </div>
       </div>
-  );
+    );
+  };
 
-  const renderDaily = () => (
+  const renderDaily = (index: number) => (
       <div className="w-full transition-all duration-300">
-           <h3 
-             onClick={() => handleSectionHeaderClick('daily')}
-             className={`text-left text-xs font-bold uppercase tracking-wider opacity-60 mb-3 px-2 cursor-pointer flex items-center ${selectedSectionSwap === 'daily' ? 'text-yellow-300 opacity-100 scale-105' : ''}`}
-          >
-             <Calendar size={12} className="mr-1"/> 7-Tage Trend {selectedSectionSwap === 'daily' ? <ArrowRightLeft size={12} className="ml-2 animate-pulse"/> : null}
-          </h3>
+           <SectionHeader title="7-Tage Trend" index={index} onClick={() => handleSectionClick(index)} />
           <div className={`${glassClass} backdrop-blur-lg rounded-3xl p-5 border space-y-4 shadow-sm`}>
               {data?.daily.time.map((dayStr, i) => {
                   const min = Math.round(data.daily.temperature_2m_min[i]);
@@ -396,34 +405,23 @@ const WeatherPage: React.FC<WeatherPageProps> = ({ onBack, favorites, onToggleFa
       </div>
   );
 
-  const renderDetails = () => (
+  const renderDetails = (index: number) => (
       <div className="w-full transition-all duration-300">
-          <h3 
-             onClick={() => handleSectionHeaderClick('details')}
-             className={`text-left text-xs font-bold uppercase tracking-wider opacity-60 mb-3 px-2 cursor-pointer flex items-center ${selectedSectionSwap === 'details' ? 'text-yellow-300 opacity-100 scale-105' : ''}`}
-          >
-              Details {selectedSectionSwap === 'details' ? <ArrowRightLeft size={12} className="ml-2 animate-pulse"/> : null}
-          </h3>
+          <SectionHeader title="Details" index={index} onClick={() => handleSectionClick(index)} />
           <div className="grid grid-cols-2 gap-3 w-full">
-              {metrics.map((metric, index) => {
-                  const isSelected = selectedSwapMetricIndex === index;
+              {metrics.map((metric, idx) => {
+                  const isSelected = selectedSwapMetricIndex === idx;
                   return (
                       <div
                           key={metric.id}
-                          onClick={(e) => { e.stopPropagation(); handleMetricClick(index); }}
-                          draggable
-                          onDragStart={(e) => { e.stopPropagation(); handleDragStartMetric(index); }}
-                          onDragOver={(e) => { e.preventDefault(); }}
-                          onDrop={(e) => { e.stopPropagation(); handleDropMetric(index); }}
+                          onClick={() => handleMetricClick(idx)}
                           className={`
                               ${isSnowyBg ? 'bg-white/60 border-slate-500/20' : 'bg-black/20 border-white/5'} 
                               backdrop-blur-xl border p-4 rounded-3xl flex flex-col items-start 
-                              cursor-pointer active:scale-95 transition-all shadow-sm relative overflow-hidden
-                              ${draggedMetricIndex === index ? 'opacity-50' : ''}
-                              ${isSelected ? 'ring-2 ring-yellow-400 bg-white/30 scale-[1.02] z-10' : 'hover:brightness-110'}
+                              relative overflow-hidden cursor-pointer transition-all active:scale-95
+                              ${isSelected ? 'ring-2 ring-yellow-400 shadow-lg scale-[0.98]' : 'hover:bg-white/5'}
                           `}
                       >
-                          {isSelected && <div className="absolute inset-0 bg-yellow-400/10 pointer-events-none"></div>}
                           <div className="flex justify-between w-full mb-3">
                               <div className={`p-2 rounded-full ${metric.colorClass || 'bg-white/20'}`}>
                                   {renderMetricIcon(metric.icon, "w-4 h-4")}
@@ -462,6 +460,13 @@ const WeatherPage: React.FC<WeatherPageProps> = ({ onBack, favorites, onToggleFa
           </div>
 
           <div className="flex space-x-2">
+            <button 
+                onClick={attemptCurrentLocation} 
+                className={`bg-white/20 hover:bg-white/30 p-2 rounded-full backdrop-blur-md transition ${isSnowyBg ? 'text-slate-800' : 'text-white'}`}
+                title="Aktueller Standort"
+            >
+                <Navigation size={24} className={!initialLocation ? 'fill-current' : ''} />
+            </button>
             <button 
                 onClick={handleFavoriteClick} 
                 className={`bg-white/20 hover:bg-white/30 p-2 rounded-full backdrop-blur-md transition ${isSnowyBg ? 'text-slate-800' : 'text-white'}`}
@@ -508,6 +513,9 @@ const WeatherPage: React.FC<WeatherPageProps> = ({ onBack, favorites, onToggleFa
                         ))}
                     </div>
                 )}
+                <div className="border-t border-gray-200 dark:border-gray-700 mt-2 pt-2 text-center">
+                    <button onClick={() => setIsSearching(false)} className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-white">Schließen</button>
+                </div>
               </div>
           </div>
       )}
@@ -516,8 +524,13 @@ const WeatherPage: React.FC<WeatherPageProps> = ({ onBack, favorites, onToggleFa
          {error ? (
              <div className="bg-white/10 p-6 rounded-2xl backdrop-blur-md mt-10">
                  <MapPinOff size={48} className="mx-auto mb-2 opacity-70" />
-                 <p>{error}</p>
-                 <button onClick={() => setIsSearching(true)} className="mt-4 bg-white/20 px-4 py-2 rounded-full text-sm font-bold">Ort suchen</button>
+                 <p className="mb-4 font-medium">{error}</p>
+                 <button 
+                    onClick={() => setIsSearching(true)} 
+                    className="bg-white/20 hover:bg-white/30 px-6 py-2 rounded-full text-sm font-bold transition flex items-center mx-auto"
+                 >
+                    <Search size={16} className="mr-2"/> Manuell suchen
+                 </button>
              </div>
          ) : data && (
              <>
@@ -539,19 +552,13 @@ const WeatherPage: React.FC<WeatherPageProps> = ({ onBack, favorites, onToggleFa
 
                 {/* Reorderable Sections */}
                 <div className="w-full mt-10 space-y-6">
-                    {sectionOrder.map((sectionId) => {
-                        if (sectionId === 'hourly') return <div key="hourly" className="animate-fade-in">{renderHourly()}</div>;
-                        if (sectionId === 'daily') return <div key="daily" className="animate-fade-in">{renderDaily()}</div>;
-                        if (sectionId === 'details') return <div key="details" className="animate-fade-in">{renderDetails()}</div>;
+                    {sectionOrder.map((sectionId, index) => {
+                        if (sectionId === 'hourly') return <div key="hourly" className="animate-fade-in">{renderHourly(index)}</div>;
+                        if (sectionId === 'daily') return <div key="daily" className="animate-fade-in">{renderDaily(index)}</div>;
+                        if (sectionId === 'details') return <div key="details" className="animate-fade-in">{renderDetails(index)}</div>;
                         return null;
                     })}
                 </div>
-                
-                {selectedSectionSwap && (
-                    <div className="fixed bottom-24 left-1/2 transform -translate-x-1/2 bg-yellow-400 text-yellow-900 px-4 py-2 rounded-full text-xs font-bold shadow-lg animate-bounce z-50">
-                        Wähle Sektion zum Tauschen...
-                    </div>
-                )}
              </>
          )}
       </div>

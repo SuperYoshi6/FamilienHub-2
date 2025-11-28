@@ -1,7 +1,7 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import Header from '../components/Header';
-import { ShoppingItem, Task, FamilyMember, Recipe } from '../types';
-import { Plus, CheckCircle2, Circle, ShoppingCart, Home, User, Trash2, Lock, BookOpen, Camera, Loader2, ChefHat, Calendar } from 'lucide-react';
+import { ShoppingItem, Task, FamilyMember, Recipe, TaskPriority } from '../types';
+import { Plus, CheckCircle2, Circle, ShoppingCart, Home, User, Trash2, Lock, BookOpen, Camera, Loader2, Calendar, Flag, AlignLeft, ChevronDown, ChevronUp } from 'lucide-react';
 import { analyzeRecipeImage } from '../services/gemini';
 import { compressImage } from '../services/imageUtils';
 
@@ -13,11 +13,11 @@ interface ListsPageProps {
   family: FamilyMember[];
   currentUser: FamilyMember;
   onToggleShopping: (id: string) => void;
-  onAddShopping: (name: string) => void;
+  onAddShopping: (name: string, note?: string) => void;
   onDeleteShopping: (id: string) => void;
-  onAddHousehold: (title: string, assignedTo: string) => void;
+  onAddHousehold: (title: string, assignedTo: string, priority: TaskPriority, note?: string) => void;
   onToggleTask: (id: string, type: 'household' | 'personal') => void;
-  onAddPersonal: (title: string) => void;
+  onAddPersonal: (title: string, priority: TaskPriority, note?: string) => void;
   onDeleteTask: (id: string, type: 'household' | 'personal') => void;
   onAddRecipe: (recipe: Recipe) => void;
   onDeleteRecipe: (id: string) => void;
@@ -49,25 +49,43 @@ const ListsPage: React.FC<ListsPageProps> = ({
   onProfileClick
 }) => {
   const [activeTab, setActiveTab] = useState<TabType>('household');
+  
+  // Form State
   const [newItem, setNewItem] = useState('');
-  const [selectedAssignee, setSelectedAssignee] = useState<string>(family[0].id);
+  const [newNote, setNewNote] = useState('');
+  const [newPriority, setNewPriority] = useState<TaskPriority>('medium');
+  // Handle empty family array safely
+  const [selectedAssignee, setSelectedAssignee] = useState<string>(family.length > 0 ? family[0].id : (currentUser?.id || ''));
+  const [showExtendedForm, setShowExtendedForm] = useState(false);
   
   // Recipe State
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [scanning, setScanning] = useState(false);
+
+  // Update selectedAssignee if family changes and current selection is invalid
+  useEffect(() => {
+    if (family.length > 0 && !family.find(f => f.id === selectedAssignee)) {
+        setSelectedAssignee(family[0].id);
+    } else if (family.length === 0 && selectedAssignee !== currentUser.id) {
+        setSelectedAssignee(currentUser.id);
+    }
+  }, [family, currentUser.id, selectedAssignee]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newItem.trim()) return;
 
     if (activeTab === 'shopping') {
-      onAddShopping(newItem.trim());
+      onAddShopping(newItem.trim(), newNote.trim());
     } else if (activeTab === 'household') {
-      onAddHousehold(newItem.trim(), selectedAssignee);
+      onAddHousehold(newItem.trim(), selectedAssignee, newPriority, newNote.trim());
     } else if (activeTab === 'personal') {
-      onAddPersonal(newItem.trim());
+      onAddPersonal(newItem.trim(), newPriority, newNote.trim());
     }
     setNewItem('');
+    setNewNote('');
+    setNewPriority('medium');
+    setShowExtendedForm(false);
   };
 
   const handleCameraClick = () => {
@@ -81,10 +99,7 @@ const ListsPage: React.FC<ListsPageProps> = ({
           const reader = new FileReader();
           reader.onloadend = async () => {
               const base64 = reader.result as string;
-              
-              // Compress before sending to API or Saving to avoid LocalStorage limits
               const compressedBase64 = await compressImage(base64, 800, 0.7);
-
               const recipe = await analyzeRecipeImage(compressedBase64);
               if (recipe) {
                   onAddRecipe({ ...recipe, image: compressedBase64 });
@@ -98,30 +113,43 @@ const ListsPage: React.FC<ListsPageProps> = ({
   };
 
   const handleAddToPlan = (recipe: Recipe) => {
-     // Defaulting to "Morgen" for demo
      onAddMealToPlan('Morgen', recipe.name, recipe.ingredients);
      alert(`${recipe.name} wurde für Morgen eingeplant!`);
+  };
+
+  // Helper to render priority dots
+  const renderPriority = (p?: TaskPriority) => {
+      if (p === 'high') return <div className="w-2 h-2 rounded-full bg-red-500 mr-2 flex-shrink-0" title="Hoch"></div>;
+      if (p === 'low') return <div className="w-2 h-2 rounded-full bg-blue-400 mr-2 flex-shrink-0" title="Niedrig"></div>;
+      return null; // Medium is default, no dot or use yellow
   };
 
   const renderShoppingList = () => {
     const sorted = [...shoppingItems].sort((a, b) => Number(a.checked) - Number(b.checked));
     return (
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         {sorted.map((item) => (
           <div 
             key={item.id} 
-            className={`group flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-all active:scale-[0.99] ${item.checked ? 'bg-gray-50 dark:bg-gray-800/50 border-gray-100 dark:border-gray-700 opacity-60' : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 shadow-sm'}`}
+            className={`group flex items-start justify-between p-3 rounded-xl border cursor-pointer transition-all active:scale-[0.99] ${item.checked ? 'bg-gray-50 dark:bg-gray-800/50 border-gray-100 dark:border-gray-700 opacity-60' : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 shadow-sm'}`}
             onClick={() => onToggleShopping(item.id)}
           >
-            <div className="flex items-center overflow-hidden">
-                {item.checked ? (
-                  <CheckCircle2 className="text-gray-400 mr-2 flex-shrink-0" size={20} />
-                ) : (
-                  <Circle className="text-orange-500 mr-2 flex-shrink-0" size={20} />
-                )}
-                <span className={`text-sm font-medium line-clamp-2 leading-tight ${item.checked ? 'text-gray-400 line-through' : 'text-gray-800 dark:text-gray-200'}`}>
-                  {item.name}
-                </span>
+            <div className="flex items-start overflow-hidden w-full">
+                <div className="mt-0.5">
+                    {item.checked ? (
+                    <CheckCircle2 className="text-gray-400 mr-2 flex-shrink-0" size={20} />
+                    ) : (
+                    <Circle className="text-orange-500 mr-2 flex-shrink-0" size={20} />
+                    )}
+                </div>
+                <div className="flex-1">
+                    <span className={`text-sm font-medium line-clamp-2 leading-tight ${item.checked ? 'text-gray-400 line-through' : 'text-gray-800 dark:text-gray-200'}`}>
+                    {item.name}
+                    </span>
+                    {item.note && (
+                        <p className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5 italic">{item.note}</p>
+                    )}
+                </div>
             </div>
             <button 
                 onClick={(e) => { e.stopPropagation(); onDeleteShopping(item.id); }}
@@ -141,10 +169,16 @@ const ListsPage: React.FC<ListsPageProps> = ({
     if (type === 'household' && currentUser.role === 'child') {
         visibleTasks = tasks.filter(t => t.assignedTo === currentUser.id);
     }
-    const sorted = [...visibleTasks].sort((a, b) => Number(a.done) - Number(b.done));
+    
+    // Sort: Not Done first, then by Priority (High > Medium > Low)
+    const priorityWeight = { high: 3, medium: 2, low: 1 };
+    const sorted = [...visibleTasks].sort((a, b) => {
+        if (a.done !== b.done) return Number(a.done) - Number(b.done);
+        return (priorityWeight[b.priority || 'medium'] || 2) - (priorityWeight[a.priority || 'medium'] || 2);
+    });
     
     return (
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         {sorted.map((task) => {
           const assignee = family.find(f => f.id === task.assignedTo);
           return (
@@ -152,13 +186,21 @@ const ListsPage: React.FC<ListsPageProps> = ({
               key={task.id} 
               className={`flex flex-col p-3 rounded-xl border relative overflow-hidden transition-all ${task.done ? 'bg-gray-50 dark:bg-gray-800/50 border-gray-100 dark:border-gray-700 opacity-60' : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 shadow-sm'}`}
             >
-              <div className="flex items-start justify-between mb-2">
-                 <div className="flex items-center cursor-pointer" onClick={() => onToggleTask(task.id, type)}>
+              <div className="flex items-start justify-between mb-1">
+                 <div className="flex items-center cursor-pointer w-full" onClick={() => onToggleTask(task.id, type)}>
                     {task.done ? (
                       <CheckCircle2 className="text-green-500 mr-2 flex-shrink-0" size={20} />
                     ) : (
                       <Circle className={`mr-2 flex-shrink-0 ${type === 'household' ? 'text-blue-500' : 'text-purple-500'}`} size={20} />
                     )}
+                    <div className="flex-1 min-w-0">
+                        <div className="flex items-center">
+                            {!task.done && renderPriority(task.priority)}
+                            <span className={`text-sm font-medium line-clamp-2 leading-tight ${task.done ? 'text-gray-400 line-through' : 'text-gray-800 dark:text-gray-200'}`}>
+                                {task.title}
+                            </span>
+                        </div>
+                    </div>
                  </div>
                  {(type === 'personal' || currentUser.role === 'parent') && (
                      <button onClick={() => onDeleteTask(task.id, type)} className="text-gray-300 hover:text-red-400 p-1 -mr-1 -mt-1 rounded-full hover:bg-red-50 dark:hover:bg-red-900/20 transition">
@@ -167,14 +209,14 @@ const ListsPage: React.FC<ListsPageProps> = ({
                  )}
               </div>
               
-              <div className="flex-1 cursor-pointer" onClick={() => onToggleTask(task.id, type)}>
-                  <span className={`text-sm font-medium line-clamp-2 leading-tight ${task.done ? 'text-gray-400 line-through' : 'text-gray-800 dark:text-gray-200'}`}>
-                    {task.title}
-                  </span>
+              <div className="pl-7 cursor-pointer" onClick={() => onToggleTask(task.id, type)}>
+                  {task.note && (
+                      <p className="text-[10px] text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-700/50 p-1.5 rounded-md mb-2">{task.note}</p>
+                  )}
                   
                   {type === 'household' && assignee && !task.done && (
-                     <div className="flex items-center mt-2 pt-2 border-t border-gray-50 dark:border-gray-700">
-                        <img src={assignee.avatar} alt={assignee.name} className="w-5 h-5 rounded-full border border-gray-200 dark:border-gray-700 mr-1.5" />
+                     <div className="flex items-center pt-1">
+                        <img src={assignee.avatar} alt={assignee.name} className="w-4 h-4 rounded-full border border-gray-200 dark:border-gray-700 mr-1.5" />
                         <span className={`text-[10px] font-bold ${assignee.color.replace('bg-', 'text-').split(' ')[1]}`}>{assignee.name}</span>
                      </div>
                   )}
@@ -266,7 +308,7 @@ const ListsPage: React.FC<ListsPageProps> = ({
     <>
       <Header title="Listen" currentUser={currentUser} onProfileClick={onProfileClick} />
       
-      {/* Tabs - UPDATED for full width evenly distributed */}
+      {/* Tabs */}
       <div className="px-4 mt-2">
         <div className="flex p-1 bg-gray-200 dark:bg-gray-800 rounded-xl w-full shadow-inner">
           <button 
@@ -299,39 +341,76 @@ const ListsPage: React.FC<ListsPageProps> = ({
       <div className="p-4 pb-24">
         {/* Input Area */}
         {showAddForm && (
-            <form onSubmit={handleSubmit} className="mb-6 bg-white dark:bg-gray-800 p-2 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700">
-                <div className="flex items-center space-x-2">
-                    <input 
-                        type="text" 
-                        value={newItem}
-                        onChange={(e) => setNewItem(e.target.value)}
-                        placeholder={activeTab === 'shopping' ? "Was fehlt?" : "Neue Aufgabe..."}
-                        className="flex-1 bg-transparent border-none focus:ring-0 text-gray-800 dark:text-white placeholder-gray-400 px-2"
-                    />
-                    <button 
-                        type="submit"
-                        className={`p-2 rounded-xl text-white transition shadow-sm ${newItem.trim() ? (activeTab === 'shopping' ? 'bg-orange-500' : activeTab === 'household' ? 'bg-blue-500' : 'bg-purple-500') : 'bg-gray-300 dark:bg-gray-600'}`}
-                    >
-                        <Plus size={20} />
-                    </button>
-                </div>
-                {/* User Selection for Household (Only Parent sees this) */}
-                {activeTab === 'household' && (
-                    <div className="flex space-x-2 pt-2 mt-2 border-t border-gray-100 dark:border-gray-700 overflow-x-auto px-1">
-                        {family.map(member => (
-                            <button
-                                key={member.id}
-                                type="button"
-                                onClick={() => setSelectedAssignee(member.id)}
-                                className={`flex items-center space-x-1 px-2 py-1 rounded-full text-[10px] font-bold border transition ${selectedAssignee === member.id ? `${member.color} border-transparent ring-1 ring-offset-1 ring-gray-300 dark:ring-gray-600` : 'bg-gray-50 dark:bg-gray-700 border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300'}`}
-                            >
-                                <img src={member.avatar} className="w-4 h-4 rounded-full" />
-                                <span>{member.name}</span>
-                            </button>
-                        ))}
+            <div className="mb-6 bg-white dark:bg-gray-800 p-3 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 animate-slide-in">
+                <form onSubmit={handleSubmit}>
+                    <div className="flex items-center space-x-2">
+                        <input 
+                            type="text" 
+                            value={newItem}
+                            onChange={(e) => setNewItem(e.target.value)}
+                            placeholder={activeTab === 'shopping' ? "Was fehlt?" : "Neue Aufgabe..."}
+                            className="flex-1 bg-transparent border-none focus:ring-0 text-gray-800 dark:text-white placeholder-gray-400 px-2 py-2"
+                        />
+                        <button 
+                            type="button"
+                            onClick={() => setShowExtendedForm(!showExtendedForm)}
+                            className={`p-2 rounded-full transition ${showExtendedForm ? 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300' : 'text-gray-400 hover:text-gray-600'}`}
+                        >
+                            {showExtendedForm ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                        </button>
+                        <button 
+                            type="submit"
+                            disabled={!newItem.trim()}
+                            className={`p-2 rounded-xl text-white transition shadow-sm ${newItem.trim() ? (activeTab === 'shopping' ? 'bg-orange-500' : activeTab === 'household' ? 'bg-blue-500' : 'bg-purple-500') : 'bg-gray-300 dark:bg-gray-600'}`}
+                        >
+                            <Plus size={20} />
+                        </button>
                     </div>
-                )}
-            </form>
+
+                    {showExtendedForm && (
+                        <div className="mt-3 pt-3 border-t border-gray-100 dark:border-gray-700 space-y-3">
+                            <div className="flex items-center space-x-2">
+                                <AlignLeft size={16} className="text-gray-400" />
+                                <input 
+                                    type="text"
+                                    value={newNote}
+                                    onChange={(e) => setNewNote(e.target.value)}
+                                    placeholder="Notiz hinzufügen (optional)..."
+                                    className="flex-1 bg-gray-50 dark:bg-gray-700/50 rounded-lg px-3 py-1.5 text-sm text-gray-800 dark:text-white focus:outline-none"
+                                />
+                            </div>
+                            
+                            {activeTab !== 'shopping' && (
+                                <div className="flex items-center space-x-2">
+                                    <Flag size={16} className="text-gray-400" />
+                                    <div className="flex space-x-2">
+                                        <button type="button" onClick={() => setNewPriority('high')} className={`px-3 py-1 rounded-full text-xs font-bold border transition ${newPriority === 'high' ? 'bg-red-100 text-red-600 border-red-200' : 'bg-white dark:bg-gray-700 border-gray-200 dark:border-gray-600 text-gray-500'}`}>Hoch</button>
+                                        <button type="button" onClick={() => setNewPriority('medium')} className={`px-3 py-1 rounded-full text-xs font-bold border transition ${newPriority === 'medium' ? 'bg-gray-200 text-gray-700 border-gray-300' : 'bg-white dark:bg-gray-700 border-gray-200 dark:border-gray-600 text-gray-500'}`}>Mittel</button>
+                                        <button type="button" onClick={() => setNewPriority('low')} className={`px-3 py-1 rounded-full text-xs font-bold border transition ${newPriority === 'low' ? 'bg-blue-100 text-blue-600 border-blue-200' : 'bg-white dark:bg-gray-700 border-gray-200 dark:border-gray-600 text-gray-500'}`}>Niedrig</button>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* User Selection for Household (Only Parent sees this) */}
+                            {activeTab === 'household' && (
+                                <div className="flex space-x-2 pt-1 overflow-x-auto px-1">
+                                    {family.length > 0 ? family.map(member => (
+                                        <button
+                                            key={member.id}
+                                            type="button"
+                                            onClick={() => setSelectedAssignee(member.id)}
+                                            className={`flex items-center space-x-1 px-2 py-1 rounded-full text-[10px] font-bold border transition ${selectedAssignee === member.id ? `${member.color} border-transparent ring-1 ring-offset-1 ring-gray-300 dark:ring-gray-600` : 'bg-gray-50 dark:bg-gray-700 border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300'}`}
+                                        >
+                                            <img src={member.avatar} className="w-4 h-4 rounded-full" />
+                                            <span>{member.name}</span>
+                                        </button>
+                                    )) : <span className="text-xs text-gray-400">Keine Familienmitglieder verfügbar</span>}
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </form>
+            </div>
         )}
 
         {!showAddForm && activeTab !== 'recipes' && (

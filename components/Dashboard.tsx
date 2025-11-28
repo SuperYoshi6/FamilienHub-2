@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import Header from '../components/Header';
-import { FamilyMember, CalendarEvent, MealPlan, AppRoute } from '../types';
-import { Clock, ClipboardList, Utensils, ChevronRight, Sun, CheckCircle, CloudRain, Loader2, MapPinOff, Cloud, CloudSnow, CloudLightning, CloudFog, Moon } from 'lucide-react';
+import { FamilyMember, CalendarEvent, MealPlan, AppRoute, SavedLocation } from '../types';
+import { Clock, ClipboardList, Utensils, ChevronRight, Sun, CheckCircle, CloudRain, Wind, Droplets, Thermometer, MapPinOff, ArrowLeft, Cloud, CloudSnow, CloudLightning, CloudFog, Moon, Umbrella, Calendar, Eye, Gauge, Sunrise, Sunset, Search, MapPin, Loader2, Star, ArrowRightLeft, Users, User } from 'lucide-react';
 import { fetchWeather, getWeatherDescription } from '../services/weather';
 import { t, Language } from '../services/translations';
 
@@ -15,57 +15,102 @@ interface DashboardProps {
   onNavigate: (route: AppRoute) => void;
   onProfileClick: () => void;
   lang: Language;
+  weatherFavorites?: SavedLocation[];
+  currentWeatherLocation: {lat: number, lng: number, name: string} | null;
+  onUpdateWeatherLocation: (loc: {lat: number, lng: number, name: string}) => void;
 }
 
 const Dashboard: React.FC<DashboardProps> = ({ 
-    family, currentUser, events, shoppingCount, openTaskCount = 0, todayMeal, onNavigate, onProfileClick, lang 
+    family, currentUser, events, shoppingCount, openTaskCount = 0, todayMeal, onNavigate, onProfileClick, lang, weatherFavorites = [],
+    currentWeatherLocation, onUpdateWeatherLocation
 }) => {
+  const [calendarView, setCalendarView] = useState<'family' | 'private'>('family');
   const today = new Date().toISOString().split('T')[0];
-  const todaysEvents = events.filter(e => e.date === today).sort((a, b) => a.time.localeCompare(b.time));
+  
+  // Filter events based on view mode
+  const filteredEvents = events.filter(e => {
+      const isToday = e.date === today;
+      if (!isToday) return false;
+      
+      if (calendarView === 'private') {
+          // Show only events assigned specifically to current user
+          return e.assignedTo.includes(currentUser.id);
+      }
+      // Family view shows all events (default)
+      return true;
+  });
+  
+  const sortedEvents = filteredEvents.sort((a, b) => a.time.localeCompare(b.time));
 
   // Weather State
   const [weatherLoading, setWeatherLoading] = useState(true);
-  const [weatherError, setWeatherError] = useState<string | null>(null);
+  const [weatherError, setWeatherError] = useState<boolean>(false);
   const [currentTemp, setCurrentTemp] = useState<string>('--');
   const [weatherDesc, setWeatherDesc] = useState<string>(t('dashboard.loading', lang));
   const [weatherCode, setWeatherCode] = useState<number>(0);
   const [isDay, setIsDay] = useState<number>(1);
+  const [locationName, setLocationName] = useState<string>('');
+
+  const loadWeatherData = async (lat: number, lng: number, name?: string) => {
+      setWeatherLoading(true);
+      setWeatherError(false);
+      try {
+          const data = await fetchWeather(lat, lng);
+          if (data) {
+              setCurrentTemp(`${Math.round(data.current.temperature_2m)}°`);
+              setWeatherDesc(getWeatherDescription(data.current.weather_code));
+              setWeatherCode(data.current.weather_code);
+              setIsDay(data.current.is_day);
+              setLocationName(name || '');
+          } else {
+              setWeatherError(true);
+          }
+      } catch (e) {
+          setWeatherError(true);
+      } finally {
+          setWeatherLoading(false);
+      }
+  };
 
   useEffect(() => {
     setWeatherDesc(t('dashboard.loading', lang));
+    
+    // Quick fallback function
+    const loadDefaultOrError = () => {
+        setWeatherError(true);
+        setWeatherLoading(false);
+    };
+
+    if (currentWeatherLocation) {
+        // If we already have a location in state, use it (persistence)
+        loadWeatherData(currentWeatherLocation.lat, currentWeatherLocation.lng, currentWeatherLocation.name);
+        return;
+    }
+
     if (!navigator.geolocation) {
-      setWeatherError(t('dashboard.location_error', lang));
-      setWeatherLoading(false);
+      loadDefaultOrError();
       return;
     }
 
     navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        const { latitude, longitude } = position.coords;
-        const data = await fetchWeather(latitude, longitude);
-        
-        if (data) {
-          setCurrentTemp(`${Math.round(data.current.temperature_2m)}°`);
-          setWeatherDesc(getWeatherDescription(data.current.weather_code));
-          setWeatherCode(data.current.weather_code);
-          setIsDay(data.current.is_day);
-          setWeatherError(null);
-        } else {
-          setWeatherError("Fehler");
-        }
-        setWeatherLoading(false);
+      (position) => {
+        const loc = { lat: position.coords.latitude, lng: position.coords.longitude, name: 'Aktueller Standort' };
+        loadWeatherData(loc.lat, loc.lng, loc.name);
+        onUpdateWeatherLocation(loc);
       },
       (error) => {
-        if (error.code === 1) {
-            setWeatherError(t('dashboard.location_error', lang));
-        } else {
-            console.error("Geo error in Dashboard:", error.message);
-            setWeatherError("Fehler");
-        }
-        setWeatherLoading(false);
-      }
+        // PERMISSION_DENIED (1) etc.
+        console.log("GPS error in Dashboard:", error.message);
+        loadDefaultOrError();
+      },
+      { timeout: 5000 }
     );
   }, [lang]);
+
+  const handleFavoriteClick = (fav: SavedLocation) => {
+      onUpdateWeatherLocation({ lat: fav.lat, lng: fav.lng, name: fav.name });
+      loadWeatherData(fav.lat, fav.lng, fav.name);
+  };
 
   // Determine Greeting Icon and Background based on Weather
   const getWeatherIcon = (code: number, day: number) => {
@@ -108,38 +153,63 @@ const Dashboard: React.FC<DashboardProps> = ({
         </div>
 
         {/* Weather Link Widget */}
-        <button 
-          onClick={() => onNavigate(AppRoute.WEATHER)}
-          className="w-full bg-white dark:bg-gray-800 rounded-2xl p-4 shadow-sm border border-gray-100 dark:border-gray-700 relative overflow-hidden flex justify-between items-center hover:bg-gray-50 dark:hover:bg-gray-750 transition"
-        >
-            {weatherLoading && (
-              <div className="absolute inset-0 bg-white/80 dark:bg-gray-800/80 z-20 flex items-center justify-center">
-                <Loader2 className="animate-spin text-blue-500" size={24} />
-              </div>
-            )}
-            
-            <div className="flex items-center space-x-4">
-                {weatherError ? (
-                   <div className="bg-gray-100 dark:bg-gray-700 p-2 rounded-full"><MapPinOff className="text-gray-400" size={20} /></div>
-                ) : (
-                   <div className="bg-blue-50 dark:bg-blue-900/30 p-2 rounded-full"><CloudRain className="text-blue-500" size={24} /></div>
+        <div className="relative">
+            <button 
+              onClick={() => onNavigate(AppRoute.WEATHER)}
+              className="w-full bg-white dark:bg-gray-800 rounded-2xl p-4 shadow-sm border border-gray-100 dark:border-gray-700 relative overflow-hidden flex justify-between items-center hover:bg-gray-50 dark:hover:bg-gray-750 transition"
+            >
+                {weatherLoading && (
+                  <div className="absolute inset-0 bg-white/80 dark:bg-gray-800/80 z-20 flex items-center justify-center">
+                    <Loader2 className="animate-spin text-blue-500" size={24} />
+                  </div>
                 )}
-                <div className="text-left">
-                    <span className="text-2xl font-bold text-gray-800 dark:text-white block leading-none mb-1">
-                      {weatherError ? '--' : currentTemp}
-                    </span>
-                    <span className="text-xs text-gray-500 dark:text-gray-400 block">
-                      {weatherError ? weatherError : weatherDesc}
-                    </span>
+                
+                <div className="flex items-center space-x-4">
+                    {weatherError ? (
+                       <div className="bg-gray-100 dark:bg-gray-700 p-2 rounded-full"><Search className="text-gray-400" size={20} /></div>
+                    ) : (
+                       <div className="bg-blue-50 dark:bg-blue-900/30 p-2 rounded-full"><CloudRain className="text-blue-500" size={24} /></div>
+                    )}
+                    <div className="text-left">
+                        <span className="text-2xl font-bold text-gray-800 dark:text-white block leading-none mb-1">
+                          {weatherError ? '--' : currentTemp}
+                        </span>
+                        <div className="text-xs text-gray-500 dark:text-gray-400 flex items-center">
+                          {weatherError ? 'Ort suchen...' : (
+                              <span>
+                                  {locationName ? `${locationName} • ` : ''} {weatherDesc}
+                              </span>
+                          )}
+                        </div>
+                    </div>
                 </div>
-            </div>
-            <div className="flex items-center text-blue-600 dark:text-blue-400 text-xs font-bold uppercase tracking-wider">
-                {t('dashboard.weather_details', lang)} <ChevronRight size={16} className="ml-1" />
-            </div>
-        </button>
+                <div className="flex items-center text-blue-600 dark:text-blue-400 text-xs font-bold uppercase tracking-wider">
+                    {t('dashboard.weather_details', lang)} <ChevronRight size={16} className="ml-1" />
+                </div>
+            </button>
+            
+            {/* Quick Favorite Selection on Error OR if explicitly shown */}
+            {weatherFavorites.length > 0 && (
+                <div className="absolute top-16 left-0 right-0 z-30 flex flex-wrap gap-2 justify-center mt-2 pointer-events-none">
+                    {/* Make container pointer events none, buttons auto to prevent covering the main button click area fully if needed, though they are below it visually in DOM flow */}
+                    <div className="pointer-events-auto flex flex-wrap gap-2 justify-center">
+                        {weatherFavorites.map(fav => (
+                            <button
+                                key={fav.id}
+                                onClick={() => handleFavoriteClick(fav)}
+                                className="bg-white dark:bg-gray-700 shadow-md border border-gray-100 dark:border-gray-600 rounded-full px-3 py-1 text-xs font-bold text-gray-600 dark:text-gray-200 flex items-center hover:bg-blue-50 dark:hover:bg-blue-900/30 transition"
+                            >
+                                <Star size={10} className="mr-1 text-yellow-500 fill-current" />
+                                {fav.name}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            )}
+        </div>
 
         {/* Action Grid */}
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-2 gap-4 mt-8">
           {/* Shopping */}
           <button 
             onClick={() => onNavigate(AppRoute.LISTS)}
@@ -191,18 +261,34 @@ const Dashboard: React.FC<DashboardProps> = ({
         <div>
           <div className="flex justify-between items-center mb-4">
             <h3 className="text-lg font-bold text-gray-800 dark:text-white">{t('dashboard.appointments_today', lang)}</h3>
-            <button 
-              onClick={() => onNavigate(AppRoute.CALENDAR)}
-              className="text-blue-600 dark:text-blue-400 text-sm font-medium flex items-center"
-            >
-              {t('dashboard.all', lang)} <ChevronRight size={16} />
-            </button>
+            <div className="flex items-center space-x-3">
+                <div className="flex bg-gray-200 dark:bg-gray-700 rounded-lg p-0.5">
+                    <button 
+                        onClick={() => setCalendarView('family')}
+                        className={`px-2 py-1 rounded-md text-[10px] font-bold transition ${calendarView === 'family' ? 'bg-white dark:bg-gray-600 shadow-sm text-gray-900 dark:text-white' : 'text-gray-500 dark:text-gray-400'}`}
+                    >
+                        Alle
+                    </button>
+                    <button 
+                        onClick={() => setCalendarView('private')}
+                        className={`px-2 py-1 rounded-md text-[10px] font-bold transition ${calendarView === 'private' ? 'bg-white dark:bg-gray-600 shadow-sm text-gray-900 dark:text-white' : 'text-gray-500 dark:text-gray-400'}`}
+                    >
+                        Meine
+                    </button>
+                </div>
+                <button 
+                onClick={() => onNavigate(AppRoute.CALENDAR)}
+                className="text-blue-600 dark:text-blue-400 text-sm font-medium flex items-center"
+                >
+                <ChevronRight size={20} />
+                </button>
+            </div>
           </div>
           
           <div className="space-y-3">
-            {todaysEvents.length > 0 ? (
-              todaysEvents.map(event => (
-                <div key={event.id} className="bg-white dark:bg-gray-800 p-4 rounded-xl shadow-sm border-l-4 border-blue-500 flex items-center">
+            {sortedEvents.length > 0 ? (
+              sortedEvents.map(event => (
+                <div key={event.id} className="bg-white dark:bg-gray-800 p-4 rounded-xl shadow-sm border-l-4 border-blue-500 flex items-center animate-fade-in">
                   <div className="flex-1">
                     <h4 className="font-semibold text-gray-800 dark:text-gray-200">{event.title}</h4>
                     <div className="flex items-center text-gray-500 dark:text-gray-400 text-xs mt-1 space-x-2">

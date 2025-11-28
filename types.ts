@@ -4,7 +4,7 @@ export interface FamilyMember {
   name: string;
   avatar: string;
   color: string;
-  role: 'parent' | 'child';
+  role: 'parent' | 'child' | 'admin'; // Added admin role
   password?: string; // Optional password for login
 }
 
@@ -19,12 +19,25 @@ export interface CalendarEvent {
   assignedTo: string[]; // IDs of family members
 }
 
+export interface NewsItem {
+  id: string;
+  title: string;
+  description: string;
+  image?: string; // Base64 or URL
+  tag?: string; // e.g. #Urlaub
+  createdAt: string;
+  authorId: string;
+}
+
 export interface ShoppingItem {
   id: string;
   name: string;
   checked: boolean;
   category?: string;
+  note?: string;
 }
+
+export type TaskPriority = 'high' | 'medium' | 'low';
 
 export interface Task {
   id: string;
@@ -32,6 +45,8 @@ export interface Task {
   done: boolean;
   assignedTo?: string; // ID of family member (for household)
   type: 'household' | 'personal';
+  priority?: TaskPriority;
+  note?: string;
 }
 
 export interface Recipe {
@@ -45,7 +60,9 @@ export interface Recipe {
 export interface MealPlan {
   id: string;
   day: string;
-  mealName: string;
+  mealName: string; // Used as "Dinner" / Main Dish
+  breakfast?: string;
+  lunch?: string;
   ingredients: string[];
   recipeHint: string;
 }
@@ -55,6 +72,16 @@ export interface MealRequest {
   dishName: string;
   requestedBy: string; // FamilyMember ID
   createdAt: string;
+}
+
+export interface FeedbackItem {
+  id: string;
+  userId: string;
+  userName: string;
+  text: string;
+  rating: number;
+  createdAt: string;
+  read?: boolean; // New: Track if admin has seen this
 }
 
 export enum AppRoute {
@@ -69,6 +96,7 @@ export enum AppRoute {
 
 export interface PlaceRecommendation {
   title: string;
+  description?: string;
   address?: string;
   rating?: string;
   uri?: string;

@@ -85,14 +85,18 @@ const ActivitiesPage: React.FC<ActivitiesPageProps> = ({ onProfileClick }) => {
                 results.places.map((place, idx) => (
                   <div key={idx} className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-4 flex flex-col justify-between hover:shadow-md transition">
                     <div>
-                        <h4 className="font-bold text-gray-900 dark:text-white text-lg mb-1">{place.title}</h4>
+                        <div className="flex justify-between items-start mb-2">
+                           <h4 className="font-bold text-gray-900 dark:text-white text-lg">{place.title}</h4>
+                           {place.rating && (
+                                <span className="inline-block bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-300 text-xs px-2 py-0.5 rounded font-bold whitespace-nowrap ml-2">
+                                    ★ {place.rating}
+                                </span>
+                           )}
+                        </div>
+                        {/* Use description here instead of address if address is redundant, but schema has both */}
+                        <p className="text-gray-600 dark:text-gray-300 text-sm mb-2">{place.description || "Keine Beschreibung verfügbar."}</p>
                         {place.address && (
-                             <p className="text-gray-500 dark:text-gray-400 text-sm mb-2">{place.address}</p>
-                        )}
-                        {place.rating && (
-                            <span className="inline-block bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-300 text-xs px-2 py-0.5 rounded font-medium">
-                                ⭐ {place.rating}
-                            </span>
+                             <p className="text-gray-400 dark:text-gray-500 text-xs flex items-center"><MapPin size={10} className="mr-1"/> {place.address}</p>
                         )}
                     </div>
                     {place.uri && (
@@ -108,7 +112,7 @@ const ActivitiesPage: React.FC<ActivitiesPageProps> = ({ onProfileClick }) => {
                   </div>
                 ))
               ) : (
-                <p className="text-gray-400 text-sm italic">Keine direkten Ortsdaten gefunden, siehe Beschreibung oben.</p>
+                <p className="text-gray-400 text-sm italic">Keine Orte gefunden.</p>
               )}
             </div>
           </div>

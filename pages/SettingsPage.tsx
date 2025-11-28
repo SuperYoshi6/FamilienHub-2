@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
-import { FamilyMember } from '../types';
-import { ArrowLeft, Save, LogOut, Moon, Sun, Wand2, Loader2, Info, MessageSquare, Star, ChevronRight, Heart, X, Check, Globe, Users, KeyRound } from 'lucide-react';
+import React, { useState, useRef } from 'react';
+import { FamilyMember, FeedbackItem } from '../types';
+import { ArrowLeft, Save, LogOut, Moon, Sun, Wand2, Loader2, Info, MessageSquare, Star, ChevronRight, Heart, X, Check, Globe, Users, KeyRound, Image as ImageIcon, Link as LinkIcon, Camera, LayoutList } from 'lucide-react';
 import { generateAvatar } from '../services/gemini';
 import { compressImage } from '../services/imageUtils';
 import Logo from '../components/Logo';
@@ -17,6 +17,9 @@ interface SettingsPageProps {
   setLang: (l: Language) => void;
   family?: FamilyMember[];
   onResetPassword?: (id: string) => void;
+  onSendFeedback?: (item: FeedbackItem) => void;
+  allFeedbacks?: FeedbackItem[];
+  onMarkFeedbackRead?: (ids: string[]) => void;
 }
 
 const EXPANDED_COLORS = [
@@ -41,19 +44,27 @@ const EXPANDED_COLORS = [
 ];
 
 const SettingsPage: React.FC<SettingsPageProps> = ({ 
-  currentUser, onUpdateUser, onLogout, onClose, darkMode, onToggleDarkMode, lang, setLang, family, onResetPassword 
+  currentUser, onUpdateUser, onLogout, onClose, darkMode, onToggleDarkMode, lang, setLang, family, onResetPassword, onSendFeedback, allFeedbacks, onMarkFeedbackRead
 }) => {
   const [name, setName] = useState(currentUser.name);
   const [avatarUrl, setAvatarUrl] = useState(currentUser.avatar);
   const [selectedColor, setSelectedColor] = useState(currentUser.color);
   const [generatingAvatar, setGeneratingAvatar] = useState(false);
+  const [showUrlInput, setShowUrlInput] = useState(false);
+  const [urlInput, setUrlInput] = useState('');
+  
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Modal States
-  const [activeModal, setActiveModal] = useState<'none' | 'about' | 'feedback' | 'reset-confirm'>('none');
+  const [activeModal, setActiveModal] = useState<'none' | 'about' | 'feedback' | 'reset-confirm' | 'admin-feedback'>('none');
   const [feedbackText, setFeedbackText] = useState('');
   const [rating, setRating] = useState(0);
   const [feedbackSent, setFeedbackSent] = useState(false);
   const [resetTarget, setResetTarget] = useState<FamilyMember | null>(null);
+
+  const isAdmin = currentUser.role === 'admin';
+  const unreadFeedbacks = allFeedbacks?.filter(f => !f.read) || [];
+  const unreadCount = unreadFeedbacks.length;
 
   const handleSave = () => {
     onUpdateUser({ name, avatar: avatarUrl, color: selectedColor });
@@ -62,6 +73,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({
 
   const handleGenerateAvatar = async () => {
     setGeneratingAvatar(true);
+    setShowUrlInput(false);
     const newAvatar = await generateAvatar();
     if (newAvatar) {
        const compressed = await compressImage(newAvatar, 300, 0.7);
@@ -71,6 +83,29 @@ const SettingsPage: React.FC<SettingsPageProps> = ({
       setAvatarUrl(`https://picsum.photos/200/200?random=${randomId}`);
     }
     setGeneratingAvatar(false);
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (file) {
+          setGeneratingAvatar(true);
+          const reader = new FileReader();
+          reader.onloadend = async () => {
+              const base64 = reader.result as string;
+              const compressed = await compressImage(base64, 400, 0.7);
+              setAvatarUrl(compressed);
+              setGeneratingAvatar(false);
+          };
+          reader.readAsDataURL(file);
+      }
+  };
+
+  const handleUrlSubmit = () => {
+      if (urlInput.trim()) {
+          setAvatarUrl(urlInput.trim());
+          setShowUrlInput(false);
+          setUrlInput('');
+      }
   };
 
   const handleResetClick = (member: FamilyMember) => {
@@ -83,21 +118,37 @@ const SettingsPage: React.FC<SettingsPageProps> = ({
           onResetPassword(resetTarget.id);
           setActiveModal('none');
           setResetTarget(null);
-          // Optional confirmation toast could go here
       }
   };
 
   const submitFeedback = (e: React.FormEvent) => {
       e.preventDefault();
+      if (onSendFeedback) {
+          onSendFeedback({
+              id: Date.now().toString(),
+              userId: currentUser.id,
+              userName: currentUser.name,
+              text: feedbackText,
+              rating: rating,
+              createdAt: new Date().toISOString()
+          });
+      }
+      
+      setFeedbackSent(true);
       setTimeout(() => {
-          setFeedbackSent(true);
-          setTimeout(() => {
-              setFeedbackSent(false);
-              setFeedbackText('');
-              setRating(0);
-              setActiveModal('none');
-          }, 2000);
-      }, 500);
+          setFeedbackSent(false);
+          setFeedbackText('');
+          setRating(0);
+          setActiveModal('none');
+      }, 2000);
+  };
+
+  const openAdminFeedback = () => {
+      setActiveModal('admin-feedback');
+      if (unreadCount > 0 && onMarkFeedbackRead) {
+          const ids = unreadFeedbacks.map(f => f.id);
+          onMarkFeedbackRead(ids);
+      }
   };
 
   return (
@@ -117,23 +168,58 @@ const SettingsPage: React.FC<SettingsPageProps> = ({
             <h2 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider ml-1">{t('settings.profile', lang)}</h2>
             
             <div className="flex flex-col items-center space-y-4">
-            <div className="relative group cursor-pointer" onClick={handleGenerateAvatar}>
-                <div className="w-28 h-28 rounded-full overflow-hidden border-4 border-white dark:border-gray-800 shadow-md relative bg-gray-200">
-                    {generatingAvatar ? (
-                        <div className="absolute inset-0 flex items-center justify-center bg-gray-100 dark:bg-gray-800">
-                            <Loader2 className="animate-spin text-blue-500" size={32} />
-                        </div>
-                    ) : (
-                        <img src={avatarUrl} alt="Profil" className="w-full h-full object-cover" />
-                    )}
+                <div className="relative group">
+                    <div className="w-32 h-32 rounded-full overflow-hidden border-4 border-white dark:border-gray-800 shadow-md relative bg-gray-200">
+                        {generatingAvatar ? (
+                            <div className="absolute inset-0 flex items-center justify-center bg-gray-100 dark:bg-gray-800">
+                                <Loader2 className="animate-spin text-blue-500" size={32} />
+                            </div>
+                        ) : (
+                            <img src={avatarUrl} alt="Profil" className="w-full h-full object-cover" />
+                        )}
+                    </div>
                 </div>
-                <div className="absolute bottom-0 right-0 bg-blue-600 text-white p-2 rounded-full shadow-sm hover:bg-blue-700 transition">
-                {generatingAvatar ? <Loader2 size={16} className="animate-spin"/> : <Wand2 size={16} />}
+
+                <div className="flex space-x-2">
+                    <button 
+                        onClick={handleGenerateAvatar} 
+                        disabled={generatingAvatar} 
+                        className="bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 p-2.5 rounded-full hover:bg-blue-100 dark:hover:bg-blue-900/40 transition"
+                        title="KI Avatar"
+                    >
+                        <Wand2 size={20} />
+                    </button>
+                    <button 
+                        onClick={() => fileInputRef.current?.click()} 
+                        disabled={generatingAvatar}
+                        className="bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400 p-2.5 rounded-full hover:bg-green-100 dark:hover:bg-green-900/40 transition"
+                        title="Upload"
+                    >
+                        <Camera size={20} />
+                    </button>
+                    <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept="image/*" className="hidden" />
+                    <button 
+                        onClick={() => setShowUrlInput(!showUrlInput)} 
+                        disabled={generatingAvatar}
+                        className="bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400 p-2.5 rounded-full hover:bg-purple-100 dark:hover:bg-purple-900/40 transition"
+                        title="URL"
+                    >
+                        <LinkIcon size={20} />
+                    </button>
                 </div>
-            </div>
-            <button onClick={handleGenerateAvatar} disabled={generatingAvatar} className="text-xs text-blue-600 dark:text-blue-400 font-bold hover:underline">
-                {t('settings.generate_avatar', lang)}
-            </button>
+
+                {showUrlInput && (
+                    <div className="flex w-full space-x-2 animate-fade-in">
+                        <input 
+                            type="text" 
+                            placeholder="Bild URL einfügen..."
+                            value={urlInput}
+                            onChange={(e) => setUrlInput(e.target.value)}
+                            className="flex-1 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                        />
+                        <button onClick={handleUrlSubmit} className="bg-blue-500 text-white px-3 py-2 rounded-lg text-sm font-bold">OK</button>
+                    </div>
+                )}
             </div>
 
             <div className="bg-white dark:bg-gray-800 p-4 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 space-y-4">
@@ -183,30 +269,18 @@ const SettingsPage: React.FC<SettingsPageProps> = ({
                         <div className={`w-4 h-4 bg-white rounded-full shadow-md transform transition-transform duration-300 ${darkMode ? 'translate-x-6' : 'translate-x-0'}`} />
                     </button>
                 </div>
-                <div className="flex items-center justify-between pt-4 border-t border-gray-100 dark:border-gray-700">
-                    <div className="flex items-center space-x-3">
-                        <div className="bg-indigo-50 dark:bg-indigo-900/20 p-2 rounded-full text-indigo-600 dark:text-indigo-400">
-                            <Globe size={20}/>
-                        </div>
-                        <span className="font-bold text-gray-800 dark:text-white">{t('settings.language', lang)}</span>
-                    </div>
-                    <div className="flex bg-gray-100 dark:bg-gray-700 rounded-lg p-1">
-                        <button onClick={() => setLang('de')} className={`px-3 py-1 rounded-md text-xs font-bold transition ${lang === 'de' ? 'bg-white dark:bg-gray-600 shadow-sm' : 'text-gray-500'}`}>DE</button>
-                        <button onClick={() => setLang('en')} className={`px-3 py-1 rounded-md text-xs font-bold transition ${lang === 'en' ? 'bg-white dark:bg-gray-600 shadow-sm' : 'text-gray-500'}`}>EN</button>
-                    </div>
-                </div>
             </div>
         </section>
 
-        {/* --- Family Management (Parent Only) --- */}
-        {currentUser.role === 'parent' && family && (
+        {/* --- Family Management (Admin Only) --- */}
+        {currentUser.role === 'admin' && family && (
             <section className="space-y-4">
                 <div className="flex justify-between items-end px-1">
                     <h2 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{t('settings.family_management', lang)}</h2>
-                    <span className="text-[10px] text-blue-500 bg-blue-50 dark:bg-blue-900/20 px-2 py-0.5 rounded-full">{t('settings.only_parents', lang)}</span>
+                    <span className="text-[10px] text-red-500 bg-red-50 dark:bg-red-900/20 px-2 py-0.5 rounded-full font-bold">Admin Bereich</span>
                 </div>
                 <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-hidden divide-y divide-gray-100 dark:divide-gray-700">
-                    {family.filter(f => f.id !== currentUser.id).map(member => (
+                    {family.filter(f => f.id !== currentUser.id && f.role !== 'admin').map(member => (
                         <div key={member.id} className="p-4 flex items-center justify-between">
                             <div className="flex items-center space-x-3">
                                 <img src={member.avatar} className="w-8 h-8 rounded-full" />
@@ -221,7 +295,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({
                             </button>
                         </div>
                     ))}
-                    {family.filter(f => f.id !== currentUser.id).length === 0 && (
+                    {family.filter(f => f.id !== currentUser.id && f.role !== 'admin').length === 0 && (
                         <div className="p-4 text-center text-gray-400 text-sm italic">Keine anderen Nutzer.</div>
                     )}
                 </div>
@@ -246,6 +320,18 @@ const SettingsPage: React.FC<SettingsPageProps> = ({
                     </div>
                     <ChevronRight size={18} className="text-gray-400" />
                 </button>
+                {isAdmin && (
+                    <button onClick={openAdminFeedback} className="w-full flex items-center justify-between p-4 hover:bg-gray-50 dark:hover:bg-gray-750 transition bg-yellow-50/50 dark:bg-yellow-900/10">
+                         <div className="flex items-center space-x-3">
+                            <div className="bg-yellow-100 dark:bg-yellow-900/40 text-yellow-700 dark:text-yellow-400 p-2 rounded-full"><LayoutList size={18} /></div>
+                            <span className="font-bold text-gray-800 dark:text-white">Admin: Nutzer Feedback</span>
+                        </div>
+                         <div className="flex items-center gap-2">
+                             {unreadCount > 0 && <span className="bg-red-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">{unreadCount}</span>}
+                             <ChevronRight size={18} className="text-gray-400" />
+                         </div>
+                    </button>
+                )}
             </div>
         </section>
 
@@ -269,9 +355,9 @@ const SettingsPage: React.FC<SettingsPageProps> = ({
                   <button onClick={() => setActiveModal('none')} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600"><X size={24} /></button>
                   <div className="flex flex-col items-center text-center space-y-4">
                       <Logo size={64} className="rounded-2xl shadow-md" />
-                      <div><h3 className="text-xl font-bold text-gray-800 dark:text-white">FamilienHub</h3><p className="text-xs text-gray-500 font-mono mt-1">Version 2.0.2</p></div>
+                      <div><h3 className="text-xl font-bold text-gray-800 dark:text-white">FamilienHub</h3><p className="text-xs text-gray-500 font-mono mt-1">Version 1.1.0</p></div>
                       <p className="text-sm text-gray-600 dark:text-gray-300 leading-relaxed">Die ultimative Organisations-App für Familien.</p>
-                      <div className="pt-4 border-t border-gray-100 dark:border-gray-700 w-full"><p className="text-xs text-gray-400">© 2024 FamilienHub Inc.</p></div>
+                      <div className="pt-4 border-t border-gray-100 dark:border-gray-700 w-full"><p className="text-xs text-gray-400">© 2025 FamilienHub Inc.</p></div>
                   </div>
               </div>
           </div>
@@ -306,7 +392,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({
                                   </button>
                               ))}
                           </div>
-                          <textarea value={feedbackText} onChange={(e) => setFeedbackText(e.target.value)} placeholder="..." rows={4} required className="w-full bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-xl p-3 text-sm text-gray-800 dark:text-white focus:ring-2 focus:ring-pink-500 outline-none resize-none" />
+                          <textarea value={feedbackText} onChange={(e) => setFeedbackText(e.target.value)} placeholder="Wie findest du die App?" rows={4} required className="w-full bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-xl p-3 text-sm text-gray-800 dark:text-white focus:ring-2 focus:ring-pink-500 outline-none resize-none" />
                           <button type="submit" className="w-full bg-pink-500 hover:bg-pink-600 text-white font-bold py-3 rounded-xl shadow-md active:scale-[0.98] transition">Absenden</button>
                       </form>
                   ) : (
@@ -315,6 +401,37 @@ const SettingsPage: React.FC<SettingsPageProps> = ({
                           <h3 className="text-xl font-bold text-gray-800 dark:text-white mb-2">Danke!</h3>
                       </div>
                   )}
+              </div>
+          </div>
+      )}
+
+      {/* ADMIN Feedback View Modal */}
+      {activeModal === 'admin-feedback' && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
+              <div className="bg-white dark:bg-gray-800 w-full max-w-md rounded-2xl shadow-2xl p-6 relative max-h-[80vh] flex flex-col">
+                  <div className="flex justify-between items-center mb-4 border-b border-gray-100 dark:border-gray-700 pb-2">
+                      <h3 className="text-lg font-bold text-gray-900 dark:text-white">Nutzer Feedback</h3>
+                      <button onClick={() => setActiveModal('none')} className="text-gray-400 hover:text-gray-600"><X size={24} /></button>
+                  </div>
+                  
+                  <div className="flex-1 overflow-y-auto custom-scrollbar space-y-3">
+                      {allFeedbacks && allFeedbacks.length > 0 ? (
+                          allFeedbacks.map(fb => (
+                              <div key={fb.id} className="bg-gray-50 dark:bg-gray-700/50 p-3 rounded-xl border border-gray-100 dark:border-gray-700">
+                                  <div className="flex justify-between items-start mb-1">
+                                      <span className="font-bold text-sm text-gray-800 dark:text-white">{fb.userName}</span>
+                                      <div className="flex">
+                                          {Array.from({length: fb.rating}).map((_, i) => <Star key={i} size={10} className="fill-yellow-400 text-yellow-400"/>)}
+                                      </div>
+                                  </div>
+                                  <p className="text-sm text-gray-600 dark:text-gray-300 mb-2">{fb.text}</p>
+                                  <div className="text-[10px] text-gray-400 text-right">{new Date(fb.createdAt).toLocaleString()}</div>
+                              </div>
+                          ))
+                      ) : (
+                          <div className="text-center py-8 text-gray-400">Kein Feedback vorhanden.</div>
+                      )}
+                  </div>
               </div>
           </div>
       )}

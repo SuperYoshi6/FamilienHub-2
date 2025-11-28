@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import { MealPlan, ShoppingItem, CalendarEvent, Recipe } from "../types";
+import { MealPlan, ShoppingItem, CalendarEvent, Recipe, PlaceRecommendation } from "../types";
 
 const apiKey = process.env.API_KEY || '';
 // Use a fresh instance for calls to ensure key validity if it changes, 
@@ -13,7 +13,7 @@ export const suggestMealPlan = async (preferences: string): Promise<MealPlan[]> 
   if (!apiKey) return [];
   const ai = getAI();
   
-  const prompt = `Erstelle einen Essensplan für die nächsten 3 Tage für eine Familie. 
+  const prompt = `Erstelle einen Essensplan für die nächsten 7 Tage (vollständige Woche). 
   Präferenzen: ${preferences || 'Gesund und schnell, kinderfreundlich'}.
   Gib das Ergebnis als JSON zurück.`;
 
@@ -29,7 +29,7 @@ export const suggestMealPlan = async (preferences: string): Promise<MealPlan[]> 
             type: Type.OBJECT,
             properties: {
               day: { type: Type.STRING, description: "Wochentag (z.B. Montag)" },
-              mealName: { type: Type.STRING, description: "Name des Gerichts" },
+              mealName: { type: Type.STRING, description: "Name des Gerichts (Abendessen)" },
               ingredients: { 
                 type: Type.ARRAY, 
                 items: { type: Type.STRING },
@@ -43,7 +43,17 @@ export const suggestMealPlan = async (preferences: string): Promise<MealPlan[]> 
       }
     });
 
-    return response.text ? JSON.parse(response.text) : [];
+    if (response.text) {
+        const raw = JSON.parse(response.text);
+        // Ensure every item has an ID for Supabase upsert
+        return raw.map((item: any) => ({
+            ...item,
+            id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+            breakfast: '', // Initialize empty for manual entry
+            lunch: ''      // Initialize empty for manual entry
+        }));
+    }
+    return [];
   } catch (error) {
     console.error("Meal plan error:", error);
     return [];
@@ -91,8 +101,6 @@ export const analyzeRecipeImage = async (base64Image: string): Promise<Recipe | 
     const ai = getAI();
 
     try {
-        // Prepare image part (remove data:image/xxx;base64, prefix if present for logic, but SDK often needs specific handling)
-        // The SDK expects pure base64 in 'data'.
         const base64Data = base64Image.split(',')[1];
         const mimeType = base64Image.split(';')[0].split(':')[1];
 
@@ -149,44 +157,52 @@ export const suggestActivities = async (
   query: string, 
   lat: number, 
   lng: number
-): Promise<{ text: string; places: any[] }> => {
+): Promise<{ text: string; places: PlaceRecommendation[] }> => {
   if (!apiKey) return { text: "API Key fehlt.", places: [] };
   const ai = getAI();
 
   try {
-    // Implement Maps Grounding as per instructions
-    const finalResponse = await ai.models.generateContent({
+    const prompt = `Empfiehl konkrete Orte für Familien basierend auf: "${query}".
+    Standort: Latitude ${lat}, Longitude ${lng}.
+    Antworte im JSON Format mit einer Liste von Orten.`;
+
+    const response = await ai.models.generateContent({
         model: "gemini-2.5-flash",
-        contents: `Empfiehl Orte für Familien: ${query}`,
+        contents: prompt,
         config: {
-            tools: [{googleMaps: {}}],
-            toolConfig: {
-                // @ts-ignore - The SDK types might be strict, but this matches the instruction pattern
-                retrievalConfig: {
-                    latLng: {
-                        latitude: lat,
-                        longitude: lng
+            responseMimeType: "application/json",
+            responseSchema: {
+                type: Type.OBJECT,
+                properties: {
+                    summary: { type: Type.STRING, description: "Kurze Zusammenfassung auf Deutsch" },
+                    places: {
+                        type: Type.ARRAY,
+                        items: {
+                            type: Type.OBJECT,
+                            properties: {
+                                title: { type: Type.STRING },
+                                description: { type: Type.STRING, description: "Warum es gut für Familien ist" },
+                                rating: { type: Type.STRING, description: "z.B. 4.5" },
+                                address: { type: Type.STRING, description: "Adresse oder Entfernung" },
+                            },
+                            required: ["title", "description"]
+                        }
                     }
-                }
+                },
+                required: ["summary", "places"]
             }
         }
     });
 
-    const chunks = finalResponse.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
-    // Extract places from chunks
-    const places = chunks
-      .filter((c: any) => c.web?.uri || c.maps?.uri)
-      .map((c: any) => {
-         if (c.maps) return { ...c.maps, title: c.maps.title || "Ort ansehen" };
-         if (c.web) return { ...c.web, title: c.web.title || "Webseite" };
-         return null;
-      })
-      .filter(Boolean);
-
-    return {
-      text: finalResponse.text || "Keine Ergebnisse gefunden.",
-      places: places
-    };
+    if (response.text) {
+        const data = JSON.parse(response.text);
+        return {
+            text: data.summary || "Hier sind einige Vorschläge:",
+            places: data.places || []
+        };
+    }
+    
+    return { text: "Keine Ergebnisse gefunden.", places: [] };
 
   } catch (error) {
     console.error("Activity search error:", error);
@@ -231,21 +247,25 @@ export const findCoordinates = async (locationName: string): Promise<{lat: numbe
     const ai = getAI();
 
     try {
-        // Maps Grounding does not support responseSchema or responseMimeType.
-        // We ask for JSON in the prompt and parse the text manually.
         const response = await ai.models.generateContent({
             model: "gemini-2.5-flash",
-            contents: `Bestimme die Geokoordinaten für: "${locationName}".
-            Gib NUR ein JSON Objekt zurück im Format: {"lat": number, "lng": number, "name": "Offizieller Name"}. Keine Markdown Formatierung.`,
+            contents: `Bestimme die Geokoordinaten (Latitude/Longitude) für den Ort: "${locationName}".
+            Gib den offiziellen Namen des Ortes zurück.`,
             config: {
-                tools: [{ googleMaps: {} }],
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                        lat: { type: Type.NUMBER },
+                        lng: { type: Type.NUMBER },
+                        name: { type: Type.STRING }
+                    },
+                    required: ["lat", "lng", "name"]
+                }
             }
         });
         
-        const text = response.text || "{}";
-        // Cleanup potential markdown code blocks
-        const jsonStr = text.replace(/```json/g, '').replace(/```/g, '').trim();
-        return JSON.parse(jsonStr);
+        return response.text ? JSON.parse(response.text) : null;
     } catch (e) {
         console.error("Geocoding error", e);
         return null;
